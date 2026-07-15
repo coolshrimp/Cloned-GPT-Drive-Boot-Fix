@@ -47,9 +47,19 @@ Even with these safeguards, **always double-check which disk/drive is selected b
 - .NET Framework 4.7.2
 - Administrator privileges (required for `diskpart` and `bcdboot`)
 
+## Download
+
+Grab the latest zipped build from the [Releases](../../releases) page. Extract and run the exe (it will prompt for Administrator).
+
 ## Building from Source
 
-Open `Cloned GPT Drive - Boot Fix.sln` in Visual Studio 2019+ and build the `Cloned GPT Drive - Boot Fix` project (Release or Debug).
+Open `Cloned GPT Drive - Boot Fix.sln` in Visual Studio 2019+ and build the `Cloned GPT Drive - Boot Fix` project (Release or Debug), or build from the command line with MSBuild:
+
+```
+msbuild "Cloned GPT Drive - Boot Fix.sln" /p:Configuration=Release
+```
+
+Releases are built automatically by GitHub Actions: pushing a version tag (e.g. `v2.0.0`) compiles the app and publishes the zipped exe on the Releases page.
 
 ## Disclaimer
 

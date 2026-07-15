@@ -682,6 +682,21 @@ namespace Cloned_GPT_Drive___Boot_Fix
         }
 
         /// <summary>
+        /// Validates a diskpart disk selector ("Disk 3") before it is passed to an elevated
+        /// diskpart session. Selectors are built internally, but never trust UI state:
+        /// anything else is rejected with a message.
+        /// </summary>
+        private bool ValidateDiskSelector(string diskSelector)
+        {
+            if (!string.IsNullOrEmpty(diskSelector) && Regex.IsMatch(diskSelector, @"^Disk \d+$"))
+                return true;
+
+            MessageBox.Show("The selected disk entry is not valid. Click 'List Disks' and select a disk again.",
+                "Invalid Disk Selection", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return false;
+        }
+
+        /// <summary>
         /// Returns the drive letters (e.g. "C:\") on one specific disk using diskpart's
         /// 'detail disk', which lists only that disk's volumes (unlike 'list volume',
         /// which lists every volume on every disk regardless of the selected disk).
@@ -901,6 +916,14 @@ namespace Cloned_GPT_Drive___Boot_Fix
                 return;
             }
 
+            // Never pass anything but a clean "Volume N" selector to the elevated diskpart session
+            if (!Regex.IsMatch(volumeSelector, @"^Volume \d+$"))
+            {
+                MessageBox.Show("The selected volume entry is not valid. Click 'Refresh' and select the volume again.",
+                    "Invalid Volume Selection", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
             if (UnusedDriveSelection_ddbox.SelectedItem == null)
             {
                 MessageBox.Show("Please select an unused drive letter.", "No Letter Selected", MessageBoxButton.OK, MessageBoxImage.Warning);
@@ -935,8 +958,14 @@ namespace Cloned_GPT_Drive___Boot_Fix
             }
 
             // Final confirmation summarizing exactly what will happen
-            string tempLetter = UnusedDriveSelection_ddbox.SelectedItem.ToString().Substring(0, 1);
+            string tempLetter = UnusedDriveSelection_ddbox.SelectedItem.ToString().Substring(0, 1).ToUpper();
             string windowsRoot = ExtractDriveLetter(DriveSelection_ddbox.SelectedItem.ToString()) + @":\";
+
+            if (!Regex.IsMatch(tempLetter, "^[A-Z]$"))
+            {
+                MessageBox.Show("The selected temporary drive letter is not valid.", "Invalid Letter", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
             string confirmMessage = "Fix Boot is ready to run:\n\n" +
                 $"  • Windows installation:  {windowsRoot}Windows\n" +
                 $"  • EFI volume:  {volumeSelector}\n" +
@@ -1307,6 +1336,8 @@ namespace Cloned_GPT_Drive___Boot_Fix
             }
 
             string selectedDisk = Disk_list_dd.SelectedItem.ToString();
+            if (!ValidateDiskSelector(selectedDisk))
+                return;
 
             try
             {
@@ -1357,6 +1388,8 @@ namespace Cloned_GPT_Drive___Boot_Fix
             }
 
             string selectedDisk = Disk_list_dd.SelectedItem.ToString();
+            if (!ValidateDiskSelector(selectedDisk))
+                return;
 
             // Check if any drive letter on THIS disk is protected
             bool hasProtectedDrive = GetDriveLettersOnDiskViaDiskpart(selectedDisk).Any(IsDriveProtected);
@@ -1424,6 +1457,8 @@ namespace Cloned_GPT_Drive___Boot_Fix
             }
 
             string selectedDisk = Disk_list_dd.SelectedItem.ToString();
+            if (!ValidateDiskSelector(selectedDisk))
+                return;
 
             // Check if any drive letter on THIS disk is protected
             List<string> protectedDrivesOnDisk = GetDriveLettersOnDiskViaDiskpart(selectedDisk)
