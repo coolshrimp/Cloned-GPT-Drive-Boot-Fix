@@ -169,54 +169,72 @@ namespace Cloned_GPT_Drive___Boot_Fix
 
         private void RefreshProtected_btn_Click(object sender, RoutedEventArgs e)
         {
-            // Rescan all connected drives and make sure system/Windows drives are protected
-            List<string> newlyProtected = new List<string>();
-
-            foreach (var drive in Environment.GetLogicalDrives())
+            try
             {
-                try
+                // Rescan all connected drives and make sure system/Windows drives (and the
+                // rest of their physical disk) are protected.
+                List<string> newlyProtected = new List<string>();
+
+                if (Properties.Settings.Default.ProtectedDrives == null)
                 {
-                    DriveInfo driveInfo = new DriveInfo(drive);
-                    if (!driveInfo.IsReady)
-                        continue;
+                    Properties.Settings.Default.ProtectedDrives = new System.Collections.Specialized.StringCollection();
+                }
 
-                    bool isSystemDrive = drive.StartsWith(System.IO.Path.GetPathRoot(Environment.SystemDirectory));
-                    bool hasWindows = Directory.Exists(System.IO.Path.Combine(drive, "Windows"));
-
-                    if (isSystemDrive || hasWindows)
+                foreach (var drive in Environment.GetLogicalDrives())
+                {
+                    try
                     {
-                        if (Properties.Settings.Default.ProtectedDrives == null)
-                        {
-                            Properties.Settings.Default.ProtectedDrives = new System.Collections.Specialized.StringCollection();
-                        }
+                        DriveInfo driveInfo = new DriveInfo(drive);
+                        if (!driveInfo.IsReady)
+                            continue;
 
-                        if (!Properties.Settings.Default.ProtectedDrives.Contains(drive))
+                        string systemRoot = System.IO.Path.GetPathRoot(Environment.SystemDirectory);
+                        bool isSystemDrive = string.Equals(drive, systemRoot, StringComparison.OrdinalIgnoreCase);
+                        bool hasWindows = Directory.Exists(System.IO.Path.Combine(drive, "Windows"));
+
+                        if (isSystemDrive || hasWindows)
                         {
-                            Properties.Settings.Default.ProtectedDrives.Add(drive);
-                            newlyProtected.Add(drive);
+                            // Protect every drive letter on the same physical disk, not just this one.
+                            foreach (string letterOnDisk in GetDriveLettersOnSameDisk(drive))
+                            {
+                                if (!Properties.Settings.Default.ProtectedDrives.Contains(letterOnDisk))
+                                {
+                                    Properties.Settings.Default.ProtectedDrives.Add(letterOnDisk);
+                                    newlyProtected.Add(letterOnDisk);
+                                }
+                            }
                         }
                     }
+                    catch { }
                 }
-                catch { }
+
+                if (newlyProtected.Count > 0)
+                {
+                    Properties.Settings.Default.Save();
+                }
+
+                RefreshProtectedDrivesList();
+
+                if (DriveSelection_ddbox.SelectedItem != null)
+                {
+                    string driveLetter = DriveSelection_ddbox.SelectedItem.ToString().Substring(0, 1);
+                    UpdateProtectButtonState(driveLetter);
+                }
+
+                if (newlyProtected.Count > 0)
+                {
+                    MessageBox.Show($"Rescan complete. {newlyProtected.Count} drive(s) were newly protected:\n\n" + string.Join("\n", newlyProtected),
+                        "Rescan Complete", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+                else
+                {
+                    MessageBox.Show("Rescan complete. All system drives are already protected.",
+                        "Rescan Complete", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
             }
-
-            if (newlyProtected.Count > 0)
+            catch (Exception ex)
             {
-                Properties.Settings.Default.Save();
-            }
-
-            RefreshProtectedDrivesList();
-
-            if (DriveSelection_ddbox.SelectedItem != null)
-            {
-                string driveLetter = DriveSelection_ddbox.SelectedItem.ToString().Substring(0, 1);
-                UpdateProtectButtonState(driveLetter);
-            }
-
-            if (newlyProtected.Count > 0)
-            {
-                MessageBox.Show($"Rescan complete. {newlyProtected.Count} system drive(s) were newly protected:\n\n" + string.Join("\n", newlyProtected),
-                    "Rescan Complete", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show($"An error occurred while rescanning drives:\n\n{ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 

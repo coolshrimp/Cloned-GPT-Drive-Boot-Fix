@@ -185,7 +185,7 @@
                 </ScrollViewer>
             </TabItem>
 
-            <TabItem Header="List Disks">
+            <TabItem Header="Extras">
                 <Grid Margin="5">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
