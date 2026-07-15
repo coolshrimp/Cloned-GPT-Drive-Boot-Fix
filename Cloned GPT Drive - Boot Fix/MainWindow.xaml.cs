@@ -121,8 +121,18 @@ namespace Cloned_GPT_Drive___Boot_Fix
                 if (!Directory.Exists(windowsDir))
                     return false;
 
-                return File.Exists(System.IO.Path.Combine(windowsDir, "System32", "ntoskrnl.exe"))
-                    && File.Exists(System.IO.Path.Combine(windowsDir, "System32", "config", "SYSTEM"))
+                // In a 32-bit process on 64-bit Windows, the host's System32 is silently
+                // redirected to SysWOW64 (which has no config\SYSTEM); go through Sysnative
+                // to see the real System32 of the running OS
+                string system32 = System.IO.Path.Combine(windowsDir, "System32");
+                if (!Environment.Is64BitProcess && Environment.Is64BitOperatingSystem
+                    && string.Equals(windowsDir, Environment.GetEnvironmentVariable("windir"), StringComparison.OrdinalIgnoreCase))
+                {
+                    system32 = System.IO.Path.Combine(windowsDir, "Sysnative");
+                }
+
+                return File.Exists(System.IO.Path.Combine(system32, "ntoskrnl.exe"))
+                    && File.Exists(System.IO.Path.Combine(system32, "config", "SYSTEM"))
                     && File.Exists(System.IO.Path.Combine(windowsDir, "explorer.exe"));
             }
             catch

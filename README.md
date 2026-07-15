@@ -7,6 +7,16 @@ When you clone a GPT/UEFI Windows drive to a new physical disk, the boot files o
 
 Read the [Safety Features](#safety-features) section before use.
 
+## Screenshots
+
+Main view — drive selection with Windows ★ / protected 🔒 markers, recommended EFI volume, and live drive details:
+
+![Main window](screenshots/01-main.png)
+
+Extras tab — disk operations, and the protected drives list showing each drive's physical disk (network drives protected automatically):
+
+![Extras tab](screenshots/02-extras.png)
+
 ## Features
 
 - **Guided Boot Repair** — select your cloned Windows drive and its FAT32 EFI partition, assign a temporary letter, and repair the boot files in one click.
@@ -49,7 +59,7 @@ Even with these safeguards, **always double-check which disk/drive is selected b
 
 ## Download
 
-Grab the latest zipped build from the [Releases](../../releases) page. Extract and run the exe (it will prompt for Administrator).
+Grab `ClonedGPTDrive-BootFix.exe` from the [Releases](../../releases) page — a single portable exe, no install and nothing to extract. It prompts for Administrator on launch. (Windows SmartScreen may warn because the exe is unsigned; choose "More info → Run anyway".)
 
 ## Building from Source
 

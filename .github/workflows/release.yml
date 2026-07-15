@@ -30,21 +30,21 @@ jobs:
       - name: Build Release
         run: msbuild "Cloned GPT Drive - Boot Fix.sln" /p:Configuration=Release /p:Platform="Any CPU" /v:minimal
 
-      - name: Zip build output
+      # Single-file release: the app has no DLL dependencies and runs fine without
+      # the .exe.config (settings defaults are compiled in; Win10/11 ship .NET 4.8)
+      - name: Stage single-file release asset
         shell: pwsh
-        run: |
-          $out = "Cloned GPT Drive - Boot Fix/bin/Release"
-          Compress-Archive -Path "$out/*.exe", "$out/*.exe.config" -DestinationPath "ClonedGPTDrive-BootFix.zip"
+        run: Copy-Item "Cloned GPT Drive - Boot Fix/bin/Release/Cloned GPT Drive - UEFI Boot Fix.exe" "ClonedGPTDrive-BootFix.exe"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: ClonedGPTDrive-BootFix
-          path: ClonedGPTDrive-BootFix.zip
+          path: ClonedGPTDrive-BootFix.exe
 
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: ClonedGPTDrive-BootFix.zip
+          files: ClonedGPTDrive-BootFix.exe
           generate_release_notes: true
