@@ -32,6 +32,21 @@ namespace Cloned_GPT_Drive___Boot_Fix
 
         public string logString = "";
 
+        /// <summary>
+        /// Represents a single volume as parsed from 'diskpart list volume' output.
+        /// </summary>
+        private class VolumeEntry
+        {
+            public int Number;
+            public string Letter;   // may be empty if no letter assigned
+            public string Label;
+            public string FileSystem;
+            public string Size;
+
+            public string DiskpartSelector => "Volume " + Number;
+        }
+
+        private readonly List<VolumeEntry> _parsedVolumes = new List<VolumeEntry>();
 
         public MainWindow()
         {
@@ -52,15 +67,29 @@ namespace Cloned_GPT_Drive___Boot_Fix
                 Properties.Settings.Default.Save();
             }
 
-            foreach (var Drives in Environment.GetLogicalDrives())
+            RefreshDriveDropdowns();
+            RefreshProtectedDrivesList();
+        }
+
+        /// <summary>
+        /// Populates the cloned-drive dropdown and the list of currently unused drive letters.
+        /// Safe to call again later (e.g. after plugging in a drive) since it clears first.
+        /// </summary>
+        private void RefreshDriveDropdowns()
+        {
+            DriveSelection_ddbox.Items.Clear();
+
+            foreach (var drive in Environment.GetLogicalDrives())
             {
-                DriveInfo DriveInf = new DriveInfo(Drives);
-                if (DriveInf.IsReady == true)
+                DriveInfo driveInfo = new DriveInfo(drive);
+                if (driveInfo.IsReady)
                 {
-                    var DriveInfo = DriveInf.Name + "     " + DriveInf.VolumeLabel;
-                    DriveSelection_ddbox.Items.Add(DriveInfo);
+                    string display = driveInfo.Name + "     " + driveInfo.VolumeLabel;
+                    DriveSelection_ddbox.Items.Add(display);
                 }
             }
+
+            UnusedDriveSelection_ddbox.Items.Clear();
 
             ArrayList driveLetters = new ArrayList(26); // Allocate space for alphabet
             for (int i = 65; i < 91; i++) // increment from ASCII values for A-Z
@@ -77,9 +106,6 @@ namespace Cloned_GPT_Drive___Boot_Fix
             {
                 UnusedDriveSelection_ddbox.Items.Add(drive + ":\\"); // add unused drive letters to the combo box
             }
-
-            RefreshProtectedDrivesList();
-
         }
 
         /// <summary>
@@ -175,6 +201,112 @@ namespace Cloned_GPT_Drive___Boot_Fix
             p.WaitForExit();
 
             return output;
+        }
+
+        /// <summary>
+        /// Parses 'diskpart list volume' output and populates the Volumes_dd dropdown
+        /// with friendly, readable entries (Volume number, letter, filesystem, size).
+        /// </summary>
+        private void PopulateVolumesDropdown(string diskpartListVolumeOutput)
+        {
+            _parsedVolumes.Clear();
+            Volumes_dd.Items.Clear();
+
+            // Typical diskpart line:
+            //   Volume 2     D   Label        FAT32  Partition    100 MB  Healthy    System
+            var lineRegex = new Regex(
+                @"Volume\s+(?<num>\d+)\s+(?<ltr>[A-Za-z])?\s*(?<label>.*?)\s+(?<fs>FAT32|NTFS|exFAT|ReFS)?\s*(?<type>Partition|Removable|DVD-ROM)?\s+(?<size>[\d.,]+\s?(?:B|KB|MB|GB|TB))",
+                RegexOptions.IgnoreCase);
+
+            foreach (string line in diskpartListVolumeOutput.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None))
+            {
+                Match m = lineRegex.Match(line);
+                if (!m.Success)
+                    continue;
+
+                var entry = new VolumeEntry
+                {
+                    Number = int.Parse(m.Groups["num"].Value),
+                    Letter = m.Groups["ltr"].Success ? m.Groups["ltr"].Value.ToUpper() : "",
+                    Label = m.Groups["label"].Value.Trim(),
+                    FileSystem = m.Groups["fs"].Success ? m.Groups["fs"].Value.ToUpper() : "",
+                    Size = m.Groups["size"].Success ? m.Groups["size"].Value.Trim() : ""
+                };
+
+                _parsedVolumes.Add(entry);
+
+                string letterDisplay = string.IsNullOrEmpty(entry.Letter) ? "--" : entry.Letter + ":";
+                string fsDisplay = string.IsNullOrEmpty(entry.FileSystem) ? "Unknown" : entry.FileSystem;
+                string labelDisplay = string.IsNullOrEmpty(entry.Label) ? "(no label)" : entry.Label;
+
+                string friendlyText = $"Volume {entry.Number}   [{letterDisplay}]   {fsDisplay}   {labelDisplay}   {entry.Size}";
+
+                Volumes_dd.Items.Add(new ComboBoxItem
+                {
+                    Content = friendlyText,
+                    Tag = entry.DiskpartSelector
+                });
+            }
+        }
+
+        /// <summary>
+        /// Gets the diskpart selector (e.g. "Volume 2") for whatever is selected in Volumes_dd,
+        /// whether it's a friendly ComboBoxItem or a plain string.
+        /// </summary>
+        private string GetSelectedVolumeSelector()
+        {
+            if (Volumes_dd.SelectedItem is ComboBoxItem item && item.Tag != null)
+                return item.Tag.ToString();
+
+            return Volumes_dd.SelectedItem?.ToString();
+        }
+
+        /// <summary>
+        /// Automatically selects the FAT32 volume that belongs to the currently selected cloned drive.
+        /// Prefers the FAT32 volume immediately following the drive's own volume (typical EFI partition
+        /// layout on a cloned disk). The user can still change the selection afterward.
+        /// </summary>
+        private void AutoSelectFat32Volume()
+        {
+            if (DriveSelection_ddbox.SelectedItem == null || _parsedVolumes.Count == 0)
+                return;
+
+            string selectedDriveLetter = DriveSelection_ddbox.SelectedItem.ToString().Substring(0, 1).ToUpper();
+
+            int matchIndex = _parsedVolumes.FindIndex(v => v.Letter == selectedDriveLetter);
+
+            VolumeEntry fat32Match = null;
+
+            if (matchIndex >= 0)
+            {
+                // Look forward from the drive's own volume for the next FAT32 volume
+                for (int i = matchIndex + 1; i < _parsedVolumes.Count; i++)
+                {
+                    if (_parsedVolumes[i].FileSystem == "FAT32")
+                    {
+                        fat32Match = _parsedVolumes[i];
+                        break;
+                    }
+                }
+            }
+
+            // Fallback: any FAT32 volume at all (excluding the drive's own volume)
+            if (fat32Match == null)
+            {
+                fat32Match = _parsedVolumes.FirstOrDefault(v => v.FileSystem == "FAT32" && v.Letter != selectedDriveLetter);
+            }
+
+            if (fat32Match == null)
+                return;
+
+            foreach (var obj in Volumes_dd.Items)
+            {
+                if (obj is ComboBoxItem cbi && cbi.Tag?.ToString() == fat32Match.DiskpartSelector)
+                {
+                    Volumes_dd.SelectedItem = cbi;
+                    break;
+                }
+            }
         }
 
         /// <summary>
@@ -290,105 +422,123 @@ namespace Cloned_GPT_Drive___Boot_Fix
 
         private void FixBoot_btn_Click(object sender, RoutedEventArgs e)
         {
-
-            StatusBox.Text = "";
-            StatusBox.AppendText(" Assigning Drive Letter");
-
-
-            Process p = new Process();                                    // new instance of Process class
-            p.StartInfo.UseShellExecute = false;                          // do not start a new shell
-            p.StartInfo.RedirectStandardOutput = true;                    // Redirects the on screen results
-            p.StartInfo.WindowStyle = ProcessWindowStyle.Hidden;
-            p.StartInfo.CreateNoWindow = true;
-            p.StartInfo.FileName = @"C:\Windows\System32\diskpart.exe";   // executable to run
-            p.StartInfo.RedirectStandardInput = true;                     // Redirects the input commands
-            p.StartInfo.Verb = "runas";
-            p.Start();                                                    // Starts the process
-            p.StandardInput.WriteLine("select " + Volumes_dd.SelectedItem.ToString());                        // Issues commands to diskpart
-            p.StandardInput.WriteLine("assign letter " + UnusedDriveSelection_ddbox.SelectedItem.ToString().Substring(0, 1));     // Issues commands to diskpart
-            p.StandardInput.WriteLine("exit");                            // _\|/_
-            p.StandardInput.Flush();
-            p.StandardInput.Close();
-
-            string output = p.StandardOutput.ReadToEnd();                 // Places the output to a variable
-            p.WaitForExit();
-            
-            CMDOutputBox.AppendText(DeleteLines(output, 11));
-
-            if (output.Contains("successfully assigned the drive letter") == true)
+            // Validate selections
+            if (DriveSelection_ddbox.SelectedItem == null)
             {
-                StatusBox.AppendText("\r\r Drive Letter Assigned");
-            } else {
-                StatusBox.AppendText("\r\r Failed to assign drive letter");
+                MessageBox.Show("Please select the cloned drive with Windows first.", "No Drive Selected", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
-
-            StatusBox.AppendText("\r\r Fixing Boot Files");
-
-            Process p1 = new Process();                                   // new instance of Process class
-            p1.StartInfo.UseShellExecute = false;                          // do not start a new shell
-            p1.StartInfo.RedirectStandardOutput = true;                    // Redirects the on screen results
-            p1.StartInfo.WindowStyle = ProcessWindowStyle.Hidden;
-            p1.StartInfo.CreateNoWindow = true;
-            p1.StartInfo.FileName = @"C:\Windows\System32\cmd.exe";   // executable to run
-            p1.StartInfo.RedirectStandardInput = true;                     // Redirects the input commands
-            p1.StartInfo.Verb = "runas";
-            p1.Start();                                                   // Starts the process
-            p1.StandardInput.WriteLine("cd C:\\Windows\\system32\\");                           // _\|/_
-            p1.StandardInput.WriteLine("bcdboot " + DriveSelection_ddbox.SelectedItem.ToString().Substring(0, 3) + "Windows " + "/s " + UnusedDriveSelection_ddbox.SelectedItem.ToString().Substring(0, 2).ToLower() + " /f UEFI");                            // _\|/_
-            p1.StandardInput.WriteLine("exit");
-            p1.StandardInput.Flush();
-            p1.StandardInput.Close();
-
-            string output1 = p1.StandardOutput.ReadToEnd();                 // Places the output to a variable
-            p1.WaitForExit();
-
-            if (output1.Contains("Boot files successfully created.") == true)
+            string volumeSelector = GetSelectedVolumeSelector();
+            if (string.IsNullOrEmpty(volumeSelector))
             {
-                StatusBox.AppendText("\r\r Boot Files Repaired");
-            } else {
-                var cmdRan = "bcdboot " + DriveSelection_ddbox.SelectedItem.ToString().Substring(0, 3) + "Windows " + "/s " + UnusedDriveSelection_ddbox.SelectedItem.ToString().Substring(0, 2).ToLower() + " /f UEFI";
-                StatusBox.AppendText("\r\r Failed to repair boot Files \r\r" + cmdRan);
+                MessageBox.Show("Please select the FAT32 volume first.\n\nClick 'Get Volumes' to load the volume list.", "No Volume Selected", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
-            CMDOutputBox.AppendText(DeleteLines(output1, 11));
-
-
-            StatusBox.AppendText("\r\r Removing Drive Letter");
-
-            Process p2 = new Process();                                    // new instance of Process class
-            p2.StartInfo.UseShellExecute = false;                          // do not start a new shell
-            p2.StartInfo.RedirectStandardOutput = true;                    // Redirects the on screen results
-            p2.StartInfo.WindowStyle = ProcessWindowStyle.Hidden;
-            p2.StartInfo.CreateNoWindow = true;
-            p2.StartInfo.FileName = @"C:\Windows\System32\diskpart.exe";   // executable to run
-            p2.StartInfo.RedirectStandardInput = true;                     // Redirects the input commands
-            p2.StartInfo.Verb = "runas";
-            p2.Start();                                                    // Starts the process
-            p2.StandardInput.WriteLine("select " + Volumes_dd.SelectedItem.ToString());                        // Issues commands to diskpart            
-            p2.StandardInput.WriteLine("remove letter " + UnusedDriveSelection_ddbox.SelectedItem.ToString().Substring(0, 1));     // Issues commands to diskpart
-            p2.StandardInput.WriteLine("exit");
-            p2.StandardInput.Flush();
-            p2.StandardInput.Close();
-
-            string output2 = p2.StandardOutput.ReadToEnd();                 // Places the output to a variable
-            p2.WaitForExit();                                              // Waits for the exe to finish
-
-
-            if (output2.Contains("successfully removed the drive letter") == true)
+            if (UnusedDriveSelection_ddbox.SelectedItem == null)
             {
-                StatusBox.AppendText("\r\r Drive Letter Removed");
-            } else {
-                StatusBox.AppendText("\r\r Failed to remove drive letter");
+                MessageBox.Show("Please select an unused drive letter.", "No Letter Selected", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
-            CMDOutputBox.AppendText(DeleteLines(output2, 11));
+            try
+            {
+                StatusBox.Text = "";
+                StatusBox.AppendText("Assigning Drive Letter...");
 
+                string letterToAssign = UnusedDriveSelection_ddbox.SelectedItem.ToString().Substring(0, 1);
 
+                // Step 1: Assign a temporary drive letter to the FAT32 EFI volume
+                string output = ExecuteDiskpartCommand(
+                    $"select {volumeSelector}",
+                    $"assign letter {letterToAssign}"
+                );
 
+                CMDOutputBox.AppendText(DeleteLines(output, 11));
+
+                if (output.Contains("successfully assigned the drive letter"))
+                {
+                    StatusBox.AppendText("\r\n\r\nDrive Letter Assigned Successfully");
+                }
+                else
+                {
+                    StatusBox.AppendText("\r\n\r\nFailed to assign drive letter");
+                    MessageBox.Show("Failed to assign drive letter. The volume may already have a letter assigned or you may need administrator privileges.",
+                        "Assignment Failed", MessageBoxButton.OK, MessageBoxImage.Error);
+                    return;
+                }
+
+                // Step 2: Rebuild boot files onto the EFI partition
+                StatusBox.AppendText("\r\n\r\nFixing Boot Files...");
+
+                Process p1 = new Process();
+                p1.StartInfo.UseShellExecute = false;
+                p1.StartInfo.RedirectStandardOutput = true;
+                p1.StartInfo.WindowStyle = ProcessWindowStyle.Hidden;
+                p1.StartInfo.CreateNoWindow = true;
+                p1.StartInfo.FileName = CMD_PATH;
+                p1.StartInfo.RedirectStandardInput = true;
+                p1.StartInfo.Verb = "runas";
+                p1.Start();
+
+                string windowsDrive = DriveSelection_ddbox.SelectedItem.ToString().Substring(0, 3);
+                string bootDrive = UnusedDriveSelection_ddbox.SelectedItem.ToString().Substring(0, 2).ToLower();
+                string bcdbootCmd = $"bcdboot {windowsDrive}Windows /s {bootDrive} /f UEFI";
+
+                p1.StandardInput.WriteLine("cd C:\\Windows\\system32\\");
+                p1.StandardInput.WriteLine(bcdbootCmd);
+                p1.StandardInput.WriteLine("exit");
+                p1.StandardInput.Flush();
+                p1.StandardInput.Close();
+
+                string output1 = p1.StandardOutput.ReadToEnd();
+                p1.WaitForExit();
+
+                CMDOutputBox.AppendText(DeleteLines(output1, 11));
+
+                if (output1.Contains("Boot files successfully created."))
+                {
+                    StatusBox.AppendText("\r\n\r\nBoot Files Repaired Successfully");
+                }
+                else
+                {
+                    StatusBox.AppendText($"\r\n\r\nFailed to repair boot files\r\n\r\nCommand: {bcdbootCmd}");
+                    MessageBox.Show($"Failed to repair boot files.\n\nCommand that was run:\n{bcdbootCmd}\n\nCheck the Detailed tab for more information.",
+                        "Boot Repair Failed", MessageBoxButton.OK, MessageBoxImage.Error);
+                    return;
+                }
+
+                // Step 3: Remove the temporary drive letter again
+                StatusBox.AppendText("\r\n\r\nRemoving Temporary Drive Letter...");
+
+                string output2 = ExecuteDiskpartCommand(
+                    $"select {volumeSelector}",
+                    $"remove letter {letterToAssign}"
+                );
+
+                CMDOutputBox.AppendText(DeleteLines(output2, 11));
+
+                if (output2.Contains("successfully removed the drive letter"))
+                {
+                    StatusBox.AppendText("\r\n\r\nDrive Letter Removed Successfully");
+                    StatusBox.AppendText("\r\n\r\n===== BOOT REPAIR COMPLETE =====");
+                    MessageBox.Show("Boot repair completed successfully!\n\nYour cloned drive should now boot properly.",
+                        "Success", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+                else
+                {
+                    StatusBox.AppendText("\r\n\r\nFailed to remove drive letter (not critical)");
+                    MessageBox.Show("Boot files were repaired, but the temporary drive letter could not be removed.\n\nYou may need to remove it manually using Disk Management.",
+                        "Partial Success", MessageBoxButton.OK, MessageBoxImage.Warning);
+                }
+            }
+            catch (Exception ex)
+            {
+                StatusBox.AppendText($"\r\n\r\nERROR: {ex.Message}");
+                MessageBox.Show($"An error occurred during boot repair:\n\n{ex.Message}\n\nMake sure you are running this application as Administrator.",
+                    "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
         }
 
         private void DriveSelection_ddbox_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -422,6 +572,9 @@ namespace Cloned_GPT_Drive___Boot_Fix
                 info.AppendLine(FormatBytes(driveInfo.AvailableFreeSpace));
 
                 Drive_Info.Text = info.ToString();
+
+                // Keep the FAT32 volume selection in sync with the chosen drive
+                AutoSelectFat32Volume();
             }
             catch (Exception ex)
             {
@@ -435,25 +588,21 @@ namespace Cloned_GPT_Drive___Boot_Fix
             {
                 StatusBox.Text = "Getting volumes...";
 
+                // Refresh the drive dropdowns too, in case a drive was just connected
+                RefreshDriveDropdowns();
+
                 string listoutput = ExecuteDiskpartCommand("list vol");
 
                 StatusBox.Text = "";
                 StatusBox.AppendText(DeleteLines(listoutput, 11));
                 CMDOutputBox.AppendText(DeleteLines(listoutput, 11));
 
-                Volumes_dd.Items.Clear();
-
-                for (int i = 0; i < 20; i++)
-                {
-                    if (StatusBox.Text.Contains("Volume " + i))
-                    {
-                        Volumes_dd.Items.Add("Volume " + i);
-                    }
-                }
+                PopulateVolumesDropdown(listoutput);
 
                 if (Volumes_dd.Items.Count > 0)
                 {
                     StatusBox.AppendText("\r\r" + Volumes_dd.Items.Count + " volume(s) found.");
+                    AutoSelectFat32Volume();
                 }
                 else
                 {

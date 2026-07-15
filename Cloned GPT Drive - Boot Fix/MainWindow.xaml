@@ -7,6 +7,39 @@
         mc:Ignorable="d"
         Title="Cloned GPT Drive - Boot Fix" Height="520.73" Width="736.401" ResizeMode="NoResize">
 
+    <Window.Resources>
+        <Style x:Key="GuideTitle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="17"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="Margin" Value="0,0,0,12"/>
+        </Style>
+        <Style x:Key="StepCard" TargetType="Border">
+            <Setter Property="BorderBrush" Value="#FFD0D0D0"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="Background" Value="#FFF7F9FC"/>
+            <Setter Property="Padding" Value="12,8,12,10"/>
+            <Setter Property="Margin" Value="0,0,0,10"/>
+        </Style>
+        <Style x:Key="StepHeader" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="Foreground" Value="#FF2255AA"/>
+            <Setter Property="Margin" Value="0,0,0,6"/>
+        </Style>
+        <Style x:Key="StepBody" TargetType="TextBlock">
+            <Setter Property="TextWrapping" Value="Wrap"/>
+            <Setter Property="Margin" Value="12,0,0,3"/>
+        </Style>
+        <Style x:Key="StepNote" TargetType="TextBlock">
+            <Setter Property="TextWrapping" Value="Wrap"/>
+            <Setter Property="Margin" Value="12,2,0,0"/>
+            <Setter Property="FontStyle" Value="Italic"/>
+            <Setter Property="Foreground" Value="Gray"/>
+            <Setter Property="FontSize" Value="11"/>
+        </Style>
+    </Window.Resources>
+
     <Canvas Height="481" Margin="0,10,4,0" VerticalAlignment="Top">
         <Label x:Name="Drive_Select_LBL" Content="Select Cloned Drive With Windows" HorizontalAlignment="Left" VerticalAlignment="Top" Width="201" Canvas.Left="100" Canvas.Top="4" RenderTransformOrigin="0.811,0.385"/>
         <ComboBox x:Name="DriveSelection_ddbox" Height="23" Canvas.Left="97" Canvas.Top="28" Width="204" SelectionChanged="DriveSelection_ddbox_SelectionChanged"/>
@@ -44,122 +77,81 @@
             <TabItem Header="Guide" HorizontalAlignment="Left" Height="20" VerticalAlignment="Top" Width="54">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="5">
                     <StackPanel Margin="10">
-                        <TextBlock FontSize="16" FontWeight="Bold" Margin="0,0,0,10">
-                            How to Repair Boot on Cloned GPT Drive
+                        <TextBlock Style="{StaticResource GuideTitle}">
+                            How to Repair Boot on a Cloned GPT Drive
                         </TextBlock>
 
-                        <TextBlock FontSize="12" FontWeight="Bold" Margin="0,10,0,5" Foreground="DarkBlue">
-                            Step 1: Prepare Your Cloned Drive
-                        </TextBlock>
-                        <TextBlock TextWrapping="Wrap" Margin="10,0,0,5">
-                            • Connect your cloned drive to your computer
-                        </TextBlock>
-                        <TextBlock TextWrapping="Wrap" Margin="10,0,0,5">
-                            • Make sure your cloned drive has Windows installed
-                        </TextBlock>
-                        <TextBlock TextWrapping="Wrap" Margin="10,0,0,10">
-                            • The drive should have a FAT32 EFI partition (usually 100-500 MB)
-                        </TextBlock>
-
-                        <TextBlock FontSize="12" FontWeight="Bold" Margin="0,10,0,5" Foreground="DarkBlue">
-                            Step 2: Select the Cloned Drive
-                        </TextBlock>
-                        <TextBlock TextWrapping="Wrap" Margin="10,0,0,5">
-                            1. In the "Select Cloned Drive With Windows" dropdown at the top
-                        </TextBlock>
-                        <TextBlock TextWrapping="Wrap" Margin="10,0,0,10">
-                            2. Choose the drive letter where your cloned Windows is installed (e.g., D:\, E:\)
-                        </TextBlock>
-
-                        <TextBlock FontSize="12" FontWeight="Bold" Margin="0,10,0,5" Foreground="DarkBlue">
-                            Step 3: Get Available Volumes
-                        </TextBlock>
-                        <TextBlock TextWrapping="Wrap" Margin="10,0,0,5">
-                            1. Click the "Get Volumes" button
-                        </TextBlock>
-                        <TextBlock TextWrapping="Wrap" Margin="10,0,0,5">
-                            2. This will list all volumes on your system
-                        </TextBlock>
-                        <TextBlock TextWrapping="Wrap" Margin="10,0,0,10">
-                            3. Look for a FAT32 volume that's around 100-500 MB (this is your EFI partition)
-                        </TextBlock>
-
-                        <TextBlock FontSize="12" FontWeight="Bold" Margin="0,10,0,5" Foreground="DarkBlue">
-                            Step 4: Select the FAT32 EFI Volume
-                        </TextBlock>
-                        <TextBlock TextWrapping="Wrap" Margin="10,0,0,5">
-                            1. In the "Select Cloned Drive Fat32 Volume" dropdown
-                        </TextBlock>
-                        <TextBlock TextWrapping="Wrap" Margin="10,0,0,10">
-                            2. Select the FAT32 volume from your cloned drive (usually "Volume 2" or similar)
-                        </TextBlock>
-
-                        <TextBlock FontSize="12" FontWeight="Bold" Margin="0,10,0,5" Foreground="DarkBlue">
-                            Step 5: Select a Temporary Drive Letter
-                        </TextBlock>
-                        <TextBlock TextWrapping="Wrap" Margin="10,0,0,5">
-                            1. In the "Select Letter" dropdown
-                        </TextBlock>
-                        <TextBlock TextWrapping="Wrap" Margin="10,0,0,10">
-                            2. Choose any available drive letter (e.g., X:\, Y:\, Z:\)
-                        </TextBlock>
-                        <TextBlock TextWrapping="Wrap" Margin="10,0,0,10" FontStyle="Italic" Foreground="Gray">
-                            Note: This letter is only used temporarily and will be removed automatically
-                        </TextBlock>
-
-                        <TextBlock FontSize="12" FontWeight="Bold" Margin="0,10,0,5" Foreground="DarkBlue">
-                            Step 6: Fix the Boot
-                        </TextBlock>
-                        <TextBlock TextWrapping="Wrap" Margin="10,0,0,5">
-                            1. Click the "Fix Boot" button
-                        </TextBlock>
-                        <TextBlock TextWrapping="Wrap" Margin="10,0,0,5">
-                            2. The tool will:
-                        </TextBlock>
-                        <TextBlock TextWrapping="Wrap" Margin="20,0,0,5">
-                            • Assign the temporary drive letter to the EFI partition
-                        </TextBlock>
-                        <TextBlock TextWrapping="Wrap" Margin="20,0,0,5">
-                            • Copy boot files from your Windows installation to the EFI partition
-                        </TextBlock>
-                        <TextBlock TextWrapping="Wrap" Margin="20,0,0,5">
-                            • Remove the temporary drive letter
-                        </TextBlock>
-                        <TextBlock TextWrapping="Wrap" Margin="10,0,0,10">
-                            3. Check the "Simple" tab for progress updates
-                        </TextBlock>
-
-                        <TextBlock FontSize="12" FontWeight="Bold" Margin="0,10,0,5" Foreground="Green">
-                            Done!
-                        </TextBlock>
-                        <TextBlock TextWrapping="Wrap" Margin="10,0,0,15">
-                            Your cloned drive should now boot properly. You can safely disconnect it and use it in another computer.
-                        </TextBlock>
-
-                        <Border BorderBrush="Orange" BorderThickness="2" Padding="10" Margin="0,10,0,10" Background="LightYellow">
+                        <Border Style="{StaticResource StepCard}">
                             <StackPanel>
-                                <TextBlock FontSize="12" FontWeight="Bold" Foreground="DarkOrange">
+                                <TextBlock Style="{StaticResource StepHeader}">Step 1 — Connect the Drive and Get Volumes</TextBlock>
+                                <TextBlock Style="{StaticResource StepBody}">1. Connect the cloned drive to your computer.</TextBlock>
+                                <TextBlock Style="{StaticResource StepBody}">2. Click the "Get Volumes" button at the top.</TextBlock>
+                                <TextBlock Style="{StaticResource StepBody}">3. This refreshes both drive dropdowns and lists every volume on the system.</TextBlock>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource StepCard}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource StepHeader}">Step 2 — Select Your Cloned Drive</TextBlock>
+                                <TextBlock Style="{StaticResource StepBody}">1. In "Select Cloned Drive With Windows", choose the drive letter that needs its boot repaired.</TextBlock>
+                                <TextBlock Style="{StaticResource StepNote}">The tool will automatically try to select the matching FAT32 EFI partition for you in the next dropdown.</TextBlock>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource StepCard}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource StepHeader}">Step 3 — Confirm the FAT32 EFI Volume</TextBlock>
+                                <TextBlock Style="{StaticResource StepBody}">1. Check "Select Cloned Drive Fat32 Volume" — it should already show the small FAT32 partition (usually 100–500 MB) belonging to your selected drive.</TextBlock>
+                                <TextBlock Style="{StaticResource StepBody}">2. If it picked the wrong volume, just change the dropdown yourself.</TextBlock>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource StepCard}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource StepHeader}">Step 4 — Pick a Temporary Mount Letter</TextBlock>
+                                <TextBlock Style="{StaticResource StepBody}">1. In "Select Letter", choose any available letter (e.g., X:\, Y:\, Z:\).</TextBlock>
+                                <TextBlock Style="{StaticResource StepNote}">This letter is only used temporarily and is removed automatically once the repair finishes.</TextBlock>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource StepCard}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource StepHeader}">Step 5 — Click Fix Boot</TextBlock>
+                                <TextBlock Style="{StaticResource StepBody}">Click "Fix Boot". The tool will, in order:</TextBlock>
+                                <TextBlock Style="{StaticResource StepBody}" Margin="24,0,0,3">• Mount the FAT32 EFI partition to the temporary letter</TextBlock>
+                                <TextBlock Style="{StaticResource StepBody}" Margin="24,0,0,3">• Rebuild boot files from the cloned Windows installation (bcdboot)</TextBlock>
+                                <TextBlock Style="{StaticResource StepBody}" Margin="24,0,0,3">• Remove the temporary letter again</TextBlock>
+                                <TextBlock Style="{StaticResource StepBody}">Watch the "Simple" tab for live progress, or "Detailed" for the raw command output.</TextBlock>
+                            </StackPanel>
+                        </Border>
+
+                        <Border BorderBrush="#FF3C9B4C" BorderThickness="1" CornerRadius="4" Background="#FFEAF7EC" Padding="12,8" Margin="0,0,0,10">
+                            <StackPanel>
+                                <TextBlock FontSize="13" FontWeight="Bold" Foreground="#FF2E7D32">Done!</TextBlock>
+                                <TextBlock TextWrapping="Wrap" Margin="0,4,0,0">
+                                    Your cloned drive should now boot properly. You can safely disconnect it and use it in another computer.
+                                </TextBlock>
+                            </StackPanel>
+                        </Border>
+
+                        <Border BorderBrush="#FFE0A100" BorderThickness="1" CornerRadius="4" Padding="12,8" Margin="0,0,0,10" Background="#FFFFF6DD">
+                            <StackPanel>
+                                <TextBlock FontSize="13" FontWeight="Bold" Foreground="#FFB07800">
                                     ⚠ Safety Features
                                 </TextBlock>
-                                <TextBlock TextWrapping="Wrap" Margin="0,5,0,0">
+                                <TextBlock TextWrapping="Wrap" Margin="0,6,0,0">
                                     This tool includes protection against accidental data loss:
                                 </TextBlock>
-                                <TextBlock TextWrapping="Wrap" Margin="10,5,0,0">
-                                    • Protected drives cannot be formatted or cleaned
-                                </TextBlock>
-                                <TextBlock TextWrapping="Wrap" Margin="10,0,0,0">
-                                    • System drives are automatically protected on first run
-                                </TextBlock>
-                                <TextBlock TextWrapping="Wrap" Margin="10,0,0,5">
-                                    • Multiple confirmations required for destructive operations
-                                </TextBlock>
-                                <TextBlock TextWrapping="Wrap" Margin="0,5,0,0" FontStyle="Italic">
+                                <TextBlock TextWrapping="Wrap" Margin="12,4,0,0">• Protected drives cannot be formatted or cleaned</TextBlock>
+                                <TextBlock TextWrapping="Wrap" Margin="12,2,0,0">• System drives are automatically protected on first run</TextBlock>
+                                <TextBlock TextWrapping="Wrap" Margin="12,2,0,0">• Multiple confirmations are required for destructive operations</TextBlock>
+                                <TextBlock TextWrapping="Wrap" Margin="0,6,0,0" FontStyle="Italic">
                                     Manage protected drives in the "Extras" tab.
                                 </TextBlock>
                             </StackPanel>
                         </Border>
 
-                        <TextBlock FontSize="10" FontStyle="Italic" Foreground="Gray" Margin="0,10,0,0" TextWrapping="Wrap">
+                        <TextBlock FontSize="10" FontStyle="Italic" Foreground="Gray" Margin="0,4,0,0" TextWrapping="Wrap">
                             Tip: Always run this application as Administrator for full functionality.
                         </TextBlock>
                     </StackPanel>

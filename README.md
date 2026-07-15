@@ -1,8 +1,11 @@
 # Cloned GPT Drive - Boot Fix
 
-A Windows utility for repairing the boot configuration on a GPT drive that was cloned from another machine. When you clone a GPT/UEFI Windows drive to a new physical disk, the boot files often don't match the new disk's EFI partition — this tool re-links them so the cloned drive boots correctly.
+A Windows utility for repairing the boot configuration on a GPT drive that was cloned from another machine. 
+When you clone a GPT/UEFI Windows drive to a new physical disk, the boot files often don't match the new disk's EFI partition — this tool re-links them so the cloned drive boots correctly.
 
-> ⚠️ **This tool performs low-level disk operations (diskpart, bcdboot) and requires Administrator privileges.** Read the [Safety Features](#safety-features) section before use.
+> ⚠️ **This tool performs low-level disk operations (diskpart, bcdboot) and requires Administrator privileges.** 
+
+Read the [Safety Features](#safety-features) section before use.
 
 ## Features
 
