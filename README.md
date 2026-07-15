@@ -20,7 +20,7 @@ Read the [Safety Features](#safety-features) section before use.
 
 1. Connect the cloned drive to your PC.
 2. Select the cloned drive (the one with Windows on it) from the dropdown.
-3. Click **Get Volumes** and select the small FAT32 EFI partition on the cloned drive.
+3. Click **Refresh** and select the small FAT32 EFI partition on the cloned drive.
 4. Pick any unused drive letter to use temporarily.
 5. Click **Fix Boot**. The tool will:
    - Assign the temporary letter to the EFI partition

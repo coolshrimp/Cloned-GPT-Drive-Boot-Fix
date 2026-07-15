@@ -69,6 +69,25 @@ namespace Cloned_GPT_Drive___Boot_Fix
 
             RefreshDriveDropdowns();
             RefreshProtectedDrivesList();
+
+            // Initial refresh of volumes on launch
+            Loaded += (s, e) => Refresh_btn_Click(this, new RoutedEventArgs());
+        }
+
+        /// <summary>
+        /// Updates the status text and progress bar shown below the top controls.
+        /// </summary>
+        private void SetProgress(string statusText, int? percent = null, bool indeterminate = false)
+        {
+            if (Progress_StatusText != null)
+                Progress_StatusText.Text = statusText;
+
+            if (Progress_Bar != null)
+            {
+                Progress_Bar.IsIndeterminate = indeterminate;
+                if (!indeterminate && percent.HasValue)
+                    Progress_Bar.Value = percent.Value;
+            }
         }
 
         /// <summary>
@@ -432,7 +451,7 @@ namespace Cloned_GPT_Drive___Boot_Fix
             string volumeSelector = GetSelectedVolumeSelector();
             if (string.IsNullOrEmpty(volumeSelector))
             {
-                MessageBox.Show("Please select the FAT32 volume first.\n\nClick 'Get Volumes' to load the volume list.", "No Volume Selected", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MessageBox.Show("Please select the FAT32 volume first.\n\nClick 'Refresh' to load the volume list.", "No Volume Selected", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
@@ -446,6 +465,7 @@ namespace Cloned_GPT_Drive___Boot_Fix
             {
                 StatusBox.Text = "";
                 StatusBox.AppendText("Assigning Drive Letter...");
+                SetProgress("Assigning temporary drive letter...", 10);
 
                 string letterToAssign = UnusedDriveSelection_ddbox.SelectedItem.ToString().Substring(0, 1);
 
@@ -460,10 +480,12 @@ namespace Cloned_GPT_Drive___Boot_Fix
                 if (output.Contains("successfully assigned the drive letter"))
                 {
                     StatusBox.AppendText("\r\n\r\nDrive Letter Assigned Successfully");
+                    SetProgress("Drive letter assigned. Rebuilding boot files...", 35);
                 }
                 else
                 {
                     StatusBox.AppendText("\r\n\r\nFailed to assign drive letter");
+                    SetProgress("Failed to assign drive letter.", 0);
                     MessageBox.Show("Failed to assign drive letter. The volume may already have a letter assigned or you may need administrator privileges.",
                         "Assignment Failed", MessageBoxButton.OK, MessageBoxImage.Error);
                     return;
@@ -500,10 +522,12 @@ namespace Cloned_GPT_Drive___Boot_Fix
                 if (output1.Contains("Boot files successfully created."))
                 {
                     StatusBox.AppendText("\r\n\r\nBoot Files Repaired Successfully");
+                    SetProgress("Boot files repaired. Removing temporary drive letter...", 75);
                 }
                 else
                 {
                     StatusBox.AppendText($"\r\n\r\nFailed to repair boot files\r\n\r\nCommand: {bcdbootCmd}");
+                    SetProgress("Failed to repair boot files.", 0);
                     MessageBox.Show($"Failed to repair boot files.\n\nCommand that was run:\n{bcdbootCmd}\n\nCheck the Detailed tab for more information.",
                         "Boot Repair Failed", MessageBoxButton.OK, MessageBoxImage.Error);
                     return;
@@ -523,12 +547,14 @@ namespace Cloned_GPT_Drive___Boot_Fix
                 {
                     StatusBox.AppendText("\r\n\r\nDrive Letter Removed Successfully");
                     StatusBox.AppendText("\r\n\r\n===== BOOT REPAIR COMPLETE =====");
+                    SetProgress("Boot repair complete!", 100);
                     MessageBox.Show("Boot repair completed successfully!\n\nYour cloned drive should now boot properly.",
                         "Success", MessageBoxButton.OK, MessageBoxImage.Information);
                 }
                 else
                 {
                     StatusBox.AppendText("\r\n\r\nFailed to remove drive letter (not critical)");
+                    SetProgress("Boot repaired, but temporary letter removal failed.", 90);
                     MessageBox.Show("Boot files were repaired, but the temporary drive letter could not be removed.\n\nYou may need to remove it manually using Disk Management.",
                         "Partial Success", MessageBoxButton.OK, MessageBoxImage.Warning);
                 }
@@ -536,6 +562,7 @@ namespace Cloned_GPT_Drive___Boot_Fix
             catch (Exception ex)
             {
                 StatusBox.AppendText($"\r\n\r\nERROR: {ex.Message}");
+                SetProgress("Error during boot repair.", 0);
                 MessageBox.Show($"An error occurred during boot repair:\n\n{ex.Message}\n\nMake sure you are running this application as Administrator.",
                     "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
@@ -582,11 +609,12 @@ namespace Cloned_GPT_Drive___Boot_Fix
             }
         }
 
-        private void Button_Click_1(object sender, RoutedEventArgs e)
+        private void Refresh_btn_Click(object sender, RoutedEventArgs e)
         {
             try
             {
                 StatusBox.Text = "Getting volumes...";
+                SetProgress("Refreshing drives and volumes...", indeterminate: true);
 
                 // Refresh the drive dropdowns too, in case a drive was just connected
                 RefreshDriveDropdowns();
@@ -603,15 +631,18 @@ namespace Cloned_GPT_Drive___Boot_Fix
                 {
                     StatusBox.AppendText("\r\r" + Volumes_dd.Items.Count + " volume(s) found.");
                     AutoSelectFat32Volume();
+                    SetProgress("Ready. " + Volumes_dd.Items.Count + " volume(s) found.", 100);
                 }
                 else
                 {
                     StatusBox.AppendText("\r\rNo volumes found.");
+                    SetProgress("No volumes found.", 100);
                 }
             }
             catch (Exception ex)
             {
                 StatusBox.Text = "Error getting volumes: " + ex.Message;
+                SetProgress("Error refreshing volumes.", 0);
                 MessageBox.Show("Failed to get volumes. Make sure you run this application as Administrator.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
