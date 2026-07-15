@@ -171,8 +171,8 @@ namespace Cloned_GPT_Drive___Boot_Fix
         {
             try
             {
-                // Rescan all connected drives and make sure system/Windows drives (and the
-                // rest of their physical disk) are protected.
+                // Rescan all connected, ready drives and protect every one of them so that
+                // nothing can be cleaned/formatted without the user explicitly unprotecting it first.
                 List<string> newlyProtected = new List<string>();
 
                 if (Properties.Settings.Default.ProtectedDrives == null)
@@ -188,20 +188,13 @@ namespace Cloned_GPT_Drive___Boot_Fix
                         if (!driveInfo.IsReady)
                             continue;
 
-                        string systemRoot = System.IO.Path.GetPathRoot(Environment.SystemDirectory);
-                        bool isSystemDrive = string.Equals(drive, systemRoot, StringComparison.OrdinalIgnoreCase);
-                        bool hasWindows = Directory.Exists(System.IO.Path.Combine(drive, "Windows"));
-
-                        if (isSystemDrive || hasWindows)
+                        // Protect every drive letter on the same physical disk, not just this one.
+                        foreach (string letterOnDisk in GetDriveLettersOnSameDisk(drive))
                         {
-                            // Protect every drive letter on the same physical disk, not just this one.
-                            foreach (string letterOnDisk in GetDriveLettersOnSameDisk(drive))
+                            if (!Properties.Settings.Default.ProtectedDrives.Contains(letterOnDisk))
                             {
-                                if (!Properties.Settings.Default.ProtectedDrives.Contains(letterOnDisk))
-                                {
-                                    Properties.Settings.Default.ProtectedDrives.Add(letterOnDisk);
-                                    newlyProtected.Add(letterOnDisk);
-                                }
+                                Properties.Settings.Default.ProtectedDrives.Add(letterOnDisk);
+                                newlyProtected.Add(letterOnDisk);
                             }
                         }
                     }
@@ -228,7 +221,7 @@ namespace Cloned_GPT_Drive___Boot_Fix
                 }
                 else
                 {
-                    MessageBox.Show("Rescan complete. All system drives are already protected.",
+                    MessageBox.Show("Rescan complete. All connected drives are already protected.",
                         "Rescan Complete", MessageBoxButton.OK, MessageBoxImage.Information);
                 }
             }
