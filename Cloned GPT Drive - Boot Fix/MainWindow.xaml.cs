@@ -528,7 +528,7 @@ namespace Cloned_GPT_Drive___Boot_Fix
                 {
                     StatusBox.AppendText($"\r\n\r\nFailed to repair boot files\r\n\r\nCommand: {bcdbootCmd}");
                     SetProgress("Failed to repair boot files.", 0);
-                    MessageBox.Show($"Failed to repair boot files.\n\nCommand that was run:\n{bcdbootCmd}\n\nCheck the Detailed tab for more information.",
+                    MessageBox.Show($"Failed to repair boot files.\n\nCommand that was run:\n{bcdbootCmd}\n\nCheck the Log tab for more information.",
                         "Boot Repair Failed", MessageBoxButton.OK, MessageBoxImage.Error);
                     return;
                 }
@@ -600,12 +600,67 @@ namespace Cloned_GPT_Drive___Boot_Fix
 
                 Drive_Info.Text = info.ToString();
 
+                Info_SelectedDriveText.Text = driveSelected;
+                UpdateProtectButtonState(driveLetter);
+
                 // Keep the FAT32 volume selection in sync with the chosen drive
                 AutoSelectFat32Volume();
             }
             catch (Exception ex)
             {
                 Drive_Info.Text = "Error reading drive information:\r\n" + ex.Message;
+            }
+        }
+
+        /// <summary>
+        /// Updates the lock/unlock protect button on the Info tab to reflect the selected drive's protection state.
+        /// </summary>
+        private void UpdateProtectButtonState(string driveLetter)
+        {
+            if (ToggleProtect_btn == null)
+                return;
+
+            if (IsDriveProtected(driveLetter))
+            {
+                ToggleProtect_btn.Content = "🔓 Unprotect Drive";
+            }
+            else
+            {
+                ToggleProtect_btn.Content = "🔒 Protect Drive";
+            }
+        }
+
+        private void ToggleProtect_btn_Click(object sender, RoutedEventArgs e)
+        {
+            if (DriveSelection_ddbox.SelectedItem == null)
+            {
+                MessageBox.Show("Please select a drive first.", "No Drive Selected", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            string driveSelected = DriveSelection_ddbox.SelectedItem.ToString().Substring(0, 3);
+            string driveLetter = DriveSelection_ddbox.SelectedItem.ToString().Substring(0, 1);
+
+            if (IsDriveProtected(driveLetter))
+            {
+                var result = MessageBox.Show(
+                    $"Are you sure you want to remove protection from {driveSelected}?\n\nThis drive will then be eligible for cleaning/formatting.",
+                    "Remove Protection?",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Question);
+
+                if (result == MessageBoxResult.Yes)
+                {
+                    Properties.Settings.Default.ProtectedDrives.Remove(driveSelected);
+                    Properties.Settings.Default.Save();
+                    RefreshProtectedDrivesList();
+                    UpdateProtectButtonState(driveLetter);
+                }
+            }
+            else
+            {
+                AddProtectedDrive(driveSelected);
+                UpdateProtectButtonState(driveLetter);
             }
         }
 
