@@ -45,7 +45,7 @@
         <ComboBox x:Name="DriveSelection_ddbox" Height="23" Canvas.Left="97" Canvas.Top="28" Width="225" SelectionChanged="DriveSelection_ddbox_SelectionChanged" HorizontalAlignment="Left" VerticalAlignment="Center"/>
         <ComboBox x:Name="UnusedDriveSelection_ddbox" Canvas.Left="567" Canvas.Top="28" Width="78" HorizontalAlignment="Left" VerticalAlignment="Center"/>
         <Button x:Name="Refresh_btn" Content="Refresh" Height="23" Canvas.Left="16" Canvas.Top="28" Width="76" Click="Refresh_btn_Click"/>
-        <ComboBox x:Name="Volumes_dd" Canvas.Left="327" Canvas.Top="28" Width="235" HorizontalAlignment="Left" VerticalAlignment="Center"/>
+        <ComboBox x:Name="Volumes_dd" Canvas.Left="327" Canvas.Top="28" Width="235" HorizontalAlignment="Left" VerticalAlignment="Center" FontFamily="Consolas"/>
         <Label x:Name="Drive_Select_LBL_Copy" Content="Select Cloned Drive Fat32 Volume" HorizontalAlignment="Left" VerticalAlignment="Center" Width="201" Canvas.Left="344" Canvas.Top="2" RenderTransformOrigin="0.811,0.385"/>
         <Label x:Name="Drive_Select_LBL_Copy1" Content="Select Letter" HorizontalAlignment="Left" VerticalAlignment="Center" Width="78" Canvas.Left="568" Canvas.Top="1" RenderTransformOrigin="0.811,0.385">
             <Label.RenderTransform>

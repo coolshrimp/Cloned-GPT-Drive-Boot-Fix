@@ -38,15 +38,19 @@ namespace Cloned_GPT_Drive___Boot_Fix
         private class VolumeEntry
         {
             public int Number;
-            public string Letter;   // may be empty if no letter assigned
-            public string Label;
-            public string FileSystem;
-            public string Size;
+            public string Letter = "";      // may be empty if no letter assigned
+            public string Label = "";
+            public string FileSystem = "";
+            public string Size = "";
+            public string Status = "";      // e.g. "Healthy"
+            public string Info = "";        // e.g. "System", "Boot", "Hidden"
+            public int? DiskNumber;         // physical disk this volume lives on (null if unknown)
 
             public string DiskpartSelector => "Volume " + Number;
         }
 
         private readonly List<VolumeEntry> _parsedVolumes = new List<VolumeEntry>();
+        private Dictionary<int, int> _volumeToDisk = new Dictionary<int, int>();
 
         public MainWindow()
         {
@@ -256,20 +260,37 @@ namespace Cloned_GPT_Drive___Boot_Fix
 
             try
             {
-                string query = $"ASSOCIATORS OF {{Win32_LogicalDisk.DeviceID='{normalizedLetter}:'}} WHERE AssocClass=Win32_LogicalDiskToPartition";
-                using (var searcher = new ManagementObjectSearcher(query))
+                // Walk letter → partition → physical disk → ALL partitions on that disk → all letters.
+                // Without the physical-disk hop the query only ever returns the original letter.
+                string partitionQuery = $"ASSOCIATORS OF {{Win32_LogicalDisk.DeviceID='{normalizedLetter}:'}} WHERE AssocClass=Win32_LogicalDiskToPartition";
+                using (var partitionSearcher = new ManagementObjectSearcher(partitionQuery))
                 {
-                    foreach (ManagementObject partition in searcher.Get())
+                    foreach (ManagementObject partition in partitionSearcher.Get())
                     {
-                        string partitionQuery = $"ASSOCIATORS OF {{Win32_DiskPartition.DeviceID='{partition["DeviceID"]}'}} WHERE AssocClass=Win32_LogicalDiskToPartition";
-                        using (var logicalDiskSearcher = new ManagementObjectSearcher(partitionQuery))
+                        string driveQuery = $"ASSOCIATORS OF {{Win32_DiskPartition.DeviceID='{partition["DeviceID"]}'}} WHERE AssocClass=Win32_DiskDriveToDiskPartition";
+                        using (var driveSearcher = new ManagementObjectSearcher(driveQuery))
                         {
-                            foreach (ManagementObject logicalDisk in logicalDiskSearcher.Get())
+                            foreach (ManagementObject physicalDisk in driveSearcher.Get())
                             {
-                                string letter = logicalDisk["DeviceID"].ToString() + "\\";
-                                if (!result.Contains(letter))
+                                string escapedDiskId = physicalDisk["DeviceID"].ToString().Replace(@"\", @"\\");
+                                string allPartitionsQuery = $"ASSOCIATORS OF {{Win32_DiskDrive.DeviceID='{escapedDiskId}'}} WHERE AssocClass=Win32_DiskDriveToDiskPartition";
+                                using (var allPartitionsSearcher = new ManagementObjectSearcher(allPartitionsQuery))
                                 {
-                                    result.Add(letter);
+                                    foreach (ManagementObject diskPartition in allPartitionsSearcher.Get())
+                                    {
+                                        string logicalQuery = $"ASSOCIATORS OF {{Win32_DiskPartition.DeviceID='{diskPartition["DeviceID"]}'}} WHERE AssocClass=Win32_LogicalDiskToPartition";
+                                        using (var logicalSearcher = new ManagementObjectSearcher(logicalQuery))
+                                        {
+                                            foreach (ManagementObject logicalDisk in logicalSearcher.Get())
+                                            {
+                                                string letter = logicalDisk["DeviceID"].ToString() + "\\";
+                                                if (!result.Contains(letter))
+                                                {
+                                                    result.Add(letter);
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -340,49 +361,192 @@ namespace Cloned_GPT_Drive___Boot_Fix
         }
 
         /// <summary>
-        /// Parses 'diskpart list volume' output and populates the Volumes_dd dropdown
-        /// with friendly, readable entries (Volume number, letter, filesystem, size).
+        /// Parses every volume table found in diskpart output (works for both 'list volume'
+        /// and 'detail disk'). Column positions are taken from the dashed separator line under
+        /// the header, so labels containing spaces and volumes without a drive letter parse
+        /// correctly — a plain regex cannot tell "no letter + label" apart from "letter".
+        /// </summary>
+        private List<VolumeEntry> ParseVolumeTable(string diskpartOutput)
+        {
+            var entries = new List<VolumeEntry>();
+            if (string.IsNullOrEmpty(diskpartOutput))
+                return entries;
+
+            List<Tuple<int, int>> columns = null;
+            string[] lines = diskpartOutput.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
+
+            for (int i = 0; i < lines.Length; i++)
+            {
+                string trimmed = lines[i].TrimStart();
+
+                // Header row: learn the column widths from the dashed separator beneath it
+                if (trimmed.StartsWith("Volume ###") && i + 1 < lines.Length && lines[i + 1].TrimStart().StartsWith("---"))
+                {
+                    columns = new List<Tuple<int, int>>();
+                    string dashes = lines[i + 1];
+                    int pos = 0;
+                    while (pos < dashes.Length)
+                    {
+                        if (dashes[pos] == '-')
+                        {
+                            int start = pos;
+                            while (pos < dashes.Length && dashes[pos] == '-') pos++;
+                            columns.Add(Tuple.Create(start, pos - start));
+                        }
+                        else
+                        {
+                            pos++;
+                        }
+                    }
+                    i++; // skip the dashed separator line
+                    continue;
+                }
+
+                if (columns == null || columns.Count < 6 || !trimmed.StartsWith("Volume "))
+                    continue;
+
+                string numText = Regex.Match(SliceColumn(lines[i], columns[0]), @"\d+").Value;
+                if (numText.Length == 0)
+                    continue;
+
+                entries.Add(new VolumeEntry
+                {
+                    Number = int.Parse(numText),
+                    Letter = SliceColumn(lines[i], columns[1]).ToUpper(),
+                    Label = SliceColumn(lines[i], columns[2]),
+                    FileSystem = SliceColumn(lines[i], columns[3]).ToUpper(),
+                    // columns[4] is Type (Partition/Removable/DVD-ROM) — not shown
+                    Size = SliceColumn(lines[i], columns[5]),
+                    Status = columns.Count > 6 ? SliceColumn(lines[i], columns[6]) : "",
+                    Info = columns.Count > 7 ? SliceColumn(lines[i], columns[7]) : ""
+                });
+            }
+
+            return entries;
+        }
+
+        private static string SliceColumn(string line, Tuple<int, int> column)
+        {
+            if (column.Item1 >= line.Length)
+                return "";
+            return line.Substring(column.Item1, Math.Min(column.Item2, line.Length - column.Item1)).Trim();
+        }
+
+        /// <summary>
+        /// Builds a map of volume number → physical disk number by running 'detail disk' for
+        /// every disk diskpart reports. Slow (extra diskpart runs) — call from a background thread.
+        /// </summary>
+        private Dictionary<int, int> BuildVolumeToDiskMap()
+        {
+            var map = new Dictionary<int, int>();
+
+            string listDiskOutput = ExecuteDiskpartCommand("list disk");
+            var diskNumbers = Regex.Matches(listDiskOutput, @"^\s*Disk\s+(\d+)", RegexOptions.Multiline)
+                .Cast<Match>()
+                .Select(m => int.Parse(m.Groups[1].Value))
+                .Distinct()
+                .ToList();
+
+            if (diskNumbers.Count == 0)
+                return map;
+
+            var commands = new List<string>();
+            foreach (int disk in diskNumbers)
+            {
+                commands.Add("select disk " + disk);
+                commands.Add("detail disk");
+            }
+
+            string detailOutput = ExecuteDiskpartCommand(commands.ToArray());
+
+            // Each section of output starts with "Disk N is now the selected disk."
+            var sections = Regex.Matches(detailOutput, @"Disk (\d+) is now the selected disk", RegexOptions.IgnoreCase)
+                .Cast<Match>()
+                .ToList();
+
+            for (int i = 0; i < sections.Count; i++)
+            {
+                int diskNumber = int.Parse(sections[i].Groups[1].Value);
+                int sectionStart = sections[i].Index;
+                int sectionEnd = (i + 1 < sections.Count) ? sections[i + 1].Index : detailOutput.Length;
+                string section = detailOutput.Substring(sectionStart, sectionEnd - sectionStart);
+
+                foreach (VolumeEntry vol in ParseVolumeTable(section))
+                {
+                    map[vol.Number] = diskNumber;
+                }
+            }
+
+            return map;
+        }
+
+        /// <summary>
+        /// Populates the Volumes_dd dropdown from 'diskpart list volume' output with aligned,
+        /// readable entries: volume number, disk, letter, filesystem, size and label/info.
+        /// FAT32 volumes (EFI partition candidates) are shown in bold.
         /// </summary>
         private void PopulateVolumesDropdown(string diskpartListVolumeOutput)
         {
             _parsedVolumes.Clear();
             Volumes_dd.Items.Clear();
 
-            // Typical diskpart line:
-            //   Volume 2     D   Label        FAT32  Partition    100 MB  Healthy    System
-            var lineRegex = new Regex(
-                @"Volume\s+(?<num>\d+)\s+(?<ltr>[A-Za-z])?\s*(?<label>.*?)\s+(?<fs>FAT32|NTFS|exFAT|ReFS)?\s*(?<type>Partition|Removable|DVD-ROM)?\s+(?<size>[\d.,]+\s?(?:B|KB|MB|GB|TB))",
-                RegexOptions.IgnoreCase);
+            List<VolumeEntry> entries = ParseVolumeTable(diskpartListVolumeOutput);
 
-            foreach (string line in diskpartListVolumeOutput.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None))
+            // Fallback so the dropdown is never empty if diskpart's layout was unexpected
+            if (entries.Count == 0)
             {
-                Match m = lineRegex.Match(line);
-                if (!m.Success)
-                    continue;
-
-                var entry = new VolumeEntry
+                foreach (Match m in Regex.Matches(diskpartListVolumeOutput, @"^\s*Volume\s+(\d+)", RegexOptions.Multiline))
                 {
-                    Number = int.Parse(m.Groups["num"].Value),
-                    Letter = m.Groups["ltr"].Success ? m.Groups["ltr"].Value.ToUpper() : "",
-                    Label = m.Groups["label"].Value.Trim(),
-                    FileSystem = m.Groups["fs"].Success ? m.Groups["fs"].Value.ToUpper() : "",
-                    Size = m.Groups["size"].Success ? m.Groups["size"].Value.Trim() : ""
-                };
+                    entries.Add(new VolumeEntry { Number = int.Parse(m.Groups[1].Value) });
+                }
+            }
+
+            foreach (VolumeEntry entry in entries)
+            {
+                if (_volumeToDisk.TryGetValue(entry.Number, out int diskNumber))
+                    entry.DiskNumber = diskNumber;
 
                 _parsedVolumes.Add(entry);
 
                 string letterDisplay = string.IsNullOrEmpty(entry.Letter) ? "--" : entry.Letter + ":";
-                string fsDisplay = string.IsNullOrEmpty(entry.FileSystem) ? "Unknown" : entry.FileSystem;
-                string labelDisplay = string.IsNullOrEmpty(entry.Label) ? "(no label)" : entry.Label;
+                string diskDisplay = entry.DiskNumber.HasValue ? "Disk " + entry.DiskNumber.Value : "Disk ?";
+                string fsDisplay = string.IsNullOrEmpty(entry.FileSystem) ? "-" : entry.FileSystem;
 
-                string friendlyText = $"Volume {entry.Number}   [{letterDisplay}]   {fsDisplay}   {labelDisplay}   {entry.Size}";
+                var tailParts = new List<string>();
+                if (!string.IsNullOrEmpty(entry.Label)) tailParts.Add(entry.Label);
+                if (!string.IsNullOrEmpty(entry.Info)) tailParts.Add(entry.Info);
+                if (!string.IsNullOrEmpty(entry.Status) && entry.Status != "Healthy") tailParts.Add(entry.Status);
 
-                Volumes_dd.Items.Add(new ComboBoxItem
+                string friendlyText = string.Format("Vol {0,2} │ {1,-6} │ {2,-3}│ {3,-5} │ {4,8} │ {5}",
+                    entry.Number, diskDisplay, letterDisplay, fsDisplay, entry.Size, string.Join("  ", tailParts));
+
+                var item = new ComboBoxItem
                 {
                     Content = friendlyText,
-                    Tag = entry.DiskpartSelector
-                });
+                    Tag = entry.DiskpartSelector,
+                    ToolTip = friendlyText
+                };
+
+                if (entry.FileSystem == "FAT32")
+                    item.FontWeight = FontWeights.Bold;
+
+                Volumes_dd.Items.Add(item);
             }
+        }
+
+        /// <summary>
+        /// Returns the drive letters (e.g. "C:\") on one specific disk using diskpart's
+        /// 'detail disk', which lists only that disk's volumes (unlike 'list volume',
+        /// which lists every volume on every disk regardless of the selected disk).
+        /// </summary>
+        private List<string> GetDriveLettersOnDiskViaDiskpart(string diskSelector)
+        {
+            string detailOutput = ExecuteDiskpartCommand($"select {diskSelector}", "detail disk");
+            return ParseVolumeTable(detailOutput)
+                .Where(v => !string.IsNullOrEmpty(v.Letter))
+                .Select(v => v.Letter + ":\\")
+                .Distinct()
+                .ToList();
         }
 
         /// <summary>
@@ -398,9 +562,11 @@ namespace Cloned_GPT_Drive___Boot_Fix
         }
 
         /// <summary>
-        /// Automatically selects the FAT32 volume that belongs to the currently selected cloned drive.
-        /// Prefers the FAT32 volume immediately following the drive's own volume (typical EFI partition
-        /// layout on a cloned disk). The user can still change the selection afterward.
+        /// Automatically selects the FAT32 (EFI) volume that belongs to the currently selected
+        /// cloned drive. When the volume→disk map is available it picks a FAT32 volume on the
+        /// same physical disk; otherwise it falls back to the next FAT32 volume after the drive's
+        /// own row in the diskpart listing. Volumes marked 'System' (the EFI partition the
+        /// current PC boots from) are avoided. The user can still change the selection afterward.
         /// </summary>
         private void AutoSelectFat32Volume()
         {
@@ -408,28 +574,34 @@ namespace Cloned_GPT_Drive___Boot_Fix
                 return;
 
             string selectedDriveLetter = ExtractDriveLetter(DriveSelection_ddbox.SelectedItem.ToString()).ToUpper();
+            VolumeEntry driveVolume = _parsedVolumes.FirstOrDefault(v => v.Letter == selectedDriveLetter);
 
-            int matchIndex = _parsedVolumes.FindIndex(v => v.Letter == selectedDriveLetter);
+            bool IsHostSystemEfi(VolumeEntry v) => v.Info.IndexOf("System", StringComparison.OrdinalIgnoreCase) >= 0;
 
             VolumeEntry fat32Match = null;
 
-            if (matchIndex >= 0)
+            // Best: a FAT32 volume on the same physical disk as the selected drive
+            if (driveVolume != null && driveVolume.DiskNumber.HasValue)
             {
-                // Look forward from the drive's own volume for the next FAT32 volume
-                for (int i = matchIndex + 1; i < _parsedVolumes.Count; i++)
-                {
-                    if (_parsedVolumes[i].FileSystem == "FAT32")
-                    {
-                        fat32Match = _parsedVolumes[i];
-                        break;
-                    }
-                }
+                var sameDisk = _parsedVolumes
+                    .Where(v => v.FileSystem == "FAT32" && v.DiskNumber == driveVolume.DiskNumber)
+                    .ToList();
+                fat32Match = sameDisk.FirstOrDefault(v => !IsHostSystemEfi(v)) ?? sameDisk.FirstOrDefault();
             }
 
-            // Fallback: any FAT32 volume at all (excluding the drive's own volume)
+            // Next best: the FAT32 volume following the drive's own row (typical clone layout)
+            if (fat32Match == null && driveVolume != null)
+            {
+                int startIndex = _parsedVolumes.IndexOf(driveVolume);
+                fat32Match = _parsedVolumes.Skip(startIndex + 1).FirstOrDefault(v => v.FileSystem == "FAT32" && !IsHostSystemEfi(v))
+                          ?? _parsedVolumes.Skip(startIndex + 1).FirstOrDefault(v => v.FileSystem == "FAT32");
+            }
+
+            // Last resort: any FAT32 volume, preferring ones that are not the host's EFI partition
             if (fat32Match == null)
             {
-                fat32Match = _parsedVolumes.FirstOrDefault(v => v.FileSystem == "FAT32" && v.Letter != selectedDriveLetter);
+                fat32Match = _parsedVolumes.FirstOrDefault(v => v.FileSystem == "FAT32" && v.Letter != selectedDriveLetter && !IsHostSystemEfi(v))
+                          ?? _parsedVolumes.FirstOrDefault(v => v.FileSystem == "FAT32" && v.Letter != selectedDriveLetter);
             }
 
             if (fat32Match == null)
@@ -576,6 +748,33 @@ namespace Cloned_GPT_Drive___Boot_Fix
             {
                 MessageBox.Show("Please select an unused drive letter.", "No Letter Selected", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
+            }
+
+            // Sanity-check the chosen volume before touching anything
+            VolumeEntry selectedVolume = _parsedVolumes.FirstOrDefault(v => v.DiskpartSelector == volumeSelector);
+            if (selectedVolume != null)
+            {
+                string windowsLetter = ExtractDriveLetter(DriveSelection_ddbox.SelectedItem.ToString()).ToUpper();
+                VolumeEntry windowsVolume = _parsedVolumes.FirstOrDefault(v => v.Letter == windowsLetter);
+
+                var warnings = new List<string>();
+
+                if (selectedVolume.FileSystem != "FAT32")
+                    warnings.Add($"• The selected volume is {(string.IsNullOrEmpty(selectedVolume.FileSystem) ? "not FAT32" : selectedVolume.FileSystem)} — the EFI partition is normally FAT32.");
+
+                if (selectedVolume.Info.IndexOf("System", StringComparison.OrdinalIgnoreCase) >= 0)
+                    warnings.Add("• The selected volume is marked 'System' — this looks like the EFI partition your CURRENT PC boots from, not the cloned drive's.");
+
+                if (selectedVolume.DiskNumber.HasValue && windowsVolume != null && windowsVolume.DiskNumber.HasValue
+                    && selectedVolume.DiskNumber != windowsVolume.DiskNumber)
+                    warnings.Add($"• The selected volume is on Disk {selectedVolume.DiskNumber}, but drive {windowsLetter}: is on Disk {windowsVolume.DiskNumber} — a cloned drive's EFI partition is normally on the same disk.");
+
+                if (warnings.Count > 0)
+                {
+                    string warningText = "Please double-check your FAT32 volume selection:\n\n" + string.Join("\n\n", warnings) + "\n\nContinue anyway?";
+                    if (MessageBox.Show(warningText, "Check Volume Selection", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
+                        return;
+                }
             }
 
             try
@@ -814,8 +1013,20 @@ namespace Cloned_GPT_Drive___Boot_Fix
                 // Refresh the drive dropdowns too, in case a drive was just connected
                 RefreshDriveDropdowns();
 
-                // Run the (slow, blocking) diskpart call on a background thread so the UI stays responsive
-                string listoutput = await Task.Run(() => ExecuteDiskpartCommand("list vol"));
+                // Run the (slow, blocking) diskpart calls on a background thread so the UI stays responsive
+                var refreshData = await Task.Run(() =>
+                {
+                    string volumes = ExecuteDiskpartCommand("list vol");
+
+                    Dictionary<int, int> volumeToDisk;
+                    try { volumeToDisk = BuildVolumeToDiskMap(); }
+                    catch { volumeToDisk = new Dictionary<int, int>(); }
+
+                    return Tuple.Create(volumes, volumeToDisk);
+                });
+
+                string listoutput = refreshData.Item1;
+                _volumeToDisk = refreshData.Item2;
 
                 StatusBox.Text = "";
                 StatusBox.AppendText(DeleteLines(listoutput, 11));
@@ -848,39 +1059,31 @@ namespace Cloned_GPT_Drive___Boot_Fix
             }
         }
 
-        private void Button_Click_2(object sender, RoutedEventArgs e)
-        {
-           
-        }
-
-        private void unmount_disk_btn_Click(object sender, RoutedEventArgs e)
-        {
-
-        }
-
         private void CreatorLink_MouseDown(object sender, MouseButtonEventArgs e)
         {
             System.Diagnostics.Process.Start("https://CoolshrimpModz.com");
         }
 
-        private void Get_Disks_btn_Click(object sender, RoutedEventArgs e)
+        private async void Get_Disks_btn_Click(object sender, RoutedEventArgs e)
         {
+            Get_Disks_btn.IsEnabled = false;
             try
             {
                 ExtrasInfoBox.Text = "Getting disks...";
 
-                string listdisksoutput = ExecuteDiskpartCommand("list disk");
+                string listdisksoutput = await Task.Run(() => ExecuteDiskpartCommand("list disk"));
 
                 ExtrasInfoBox.Text = "";
                 ExtrasInfoBox.AppendText(DeleteLines(listdisksoutput, 11));
 
                 Disk_list_dd.Items.Clear();
 
-                for (int i = 0; i < 20; i++)
+                foreach (Match m in Regex.Matches(listdisksoutput, @"^\s*Disk\s+(\d+)", RegexOptions.Multiline))
                 {
-                    if (ExtrasInfoBox.Text.Contains("Disk " + i))
+                    string diskEntry = "Disk " + m.Groups[1].Value;
+                    if (!Disk_list_dd.Items.Contains(diskEntry))
                     {
-                        Disk_list_dd.Items.Add("Disk " + i);
+                        Disk_list_dd.Items.Add(diskEntry);
                     }
                 }
 
@@ -898,6 +1101,10 @@ namespace Cloned_GPT_Drive___Boot_Fix
                 ExtrasInfoBox.Text = "Error getting disks: " + ex.Message;
                 MessageBox.Show("Failed to get disks. Make sure you run this application as Administrator.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
+            finally
+            {
+                Get_Disks_btn.IsEnabled = true;
+            }
         }
 
         private void ProtectDisk_btn_Click(object sender, RoutedEventArgs e)
@@ -912,18 +1119,9 @@ namespace Cloned_GPT_Drive___Boot_Fix
 
             try
             {
-                string diskOutput = ExecuteDiskpartCommand($"select {selectedDisk}", "list volume");
-
-                // Find drive letters belonging to this disk
-                List<string> drivesOnDisk = new List<string>();
-                foreach (var driveLetterObj in Environment.GetLogicalDrives())
-                {
-                    string letter = driveLetterObj.Substring(0, 1).ToUpper();
-                    if (diskOutput.Contains($" {letter} "))
-                    {
-                        drivesOnDisk.Add(driveLetterObj);
-                    }
-                }
+                // 'detail disk' lists only the selected disk's volumes, so these letters
+                // really belong to this disk (unlike 'list volume', which lists everything)
+                List<string> drivesOnDisk = GetDriveLettersOnDiskViaDiskpart(selectedDisk);
 
                 if (drivesOnDisk.Count == 0)
                 {
@@ -968,18 +1166,8 @@ namespace Cloned_GPT_Drive___Boot_Fix
 
             string selectedDisk = Disk_list_dd.SelectedItem.ToString();
 
-            // Check if any drive on this disk is protected
-            string diskOutput = ExecuteDiskpartCommand($"select {selectedDisk}", "list volume");
-
-            bool hasProtectedDrive = false;
-            foreach (string protectedDrive in Properties.Settings.Default.ProtectedDrives)
-            {
-                if (diskOutput.Contains(protectedDrive.Substring(0, 1)))
-                {
-                    hasProtectedDrive = true;
-                    break;
-                }
-            }
+            // Check if any drive letter on THIS disk is protected
+            bool hasProtectedDrive = GetDriveLettersOnDiskViaDiskpart(selectedDisk).Any(IsDriveProtected);
 
             if (hasProtectedDrive)
             {
@@ -1045,17 +1233,10 @@ namespace Cloned_GPT_Drive___Boot_Fix
 
             string selectedDisk = Disk_list_dd.SelectedItem.ToString();
 
-            // Check if any drive on this disk is protected
-            string diskOutput = ExecuteDiskpartCommand($"select {selectedDisk}", "list volume");
-
-            List<string> protectedDrivesOnDisk = new List<string>();
-            foreach (string protectedDrive in Properties.Settings.Default.ProtectedDrives)
-            {
-                if (diskOutput.Contains(protectedDrive.Substring(0, 1)))
-                {
-                    protectedDrivesOnDisk.Add(protectedDrive);
-                }
-            }
+            // Check if any drive letter on THIS disk is protected
+            List<string> protectedDrivesOnDisk = GetDriveLettersOnDiskViaDiskpart(selectedDisk)
+                .Where(IsDriveProtected)
+                .ToList();
 
             if (protectedDrivesOnDisk.Count > 0)
             {
