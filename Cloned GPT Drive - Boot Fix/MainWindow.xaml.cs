@@ -1067,24 +1067,41 @@ namespace Cloned_GPT_Drive___Boot_Fix
                 string driveSelected = driveLetter + @":\";
                 DriveInfo driveInfo = new DriveInfo(driveSelected);
 
-                ManagementObject disk = new ManagementObject("win32_logicaldisk.deviceid=\"" + driveLetter + ":\"");
-                disk.Get();
+                string label = string.IsNullOrEmpty(driveInfo.VolumeLabel) ? "(no label)" : driveInfo.VolumeLabel;
+
+                string serial = "unknown";
+                try
+                {
+                    ManagementObject disk = new ManagementObject("win32_logicaldisk.deviceid=\"" + driveLetter + ":\"");
+                    disk.Get();
+                    if (disk["VolumeSerialNumber"] != null)
+                        serial = disk["VolumeSerialNumber"].ToString();
+                }
+                catch { }
+
+                bool isNetwork = driveInfo.DriveType == DriveType.Network;
+                int? diskNumber = isNetwork ? null : GetDiskNumberForLetter(driveLetter);
+                string diskText = isNetwork ? "Network" : (diskNumber.HasValue ? "Disk " + diskNumber.Value : "unknown");
+
+                long usedBytes = driveInfo.TotalSize - driveInfo.AvailableFreeSpace;
+                double freePercent = driveInfo.TotalSize > 0 ? driveInfo.AvailableFreeSpace * 100.0 / driveInfo.TotalSize : 0;
+
+                // Aligned label/value rows; Drive_Info uses a monospace font
+                string Row(string name, string value) => name.PadRight(11) + value;
 
                 StringBuilder info = new StringBuilder();
-                info.AppendLine("Drive Letter:");
-                info.AppendLine(driveSelected);
+                info.AppendLine(Row("Letter:", driveSelected));
+                info.AppendLine(Row("Label:", label));
+                info.AppendLine(Row("Type:", driveInfo.DriveType + " — " + driveInfo.DriveFormat));
+                info.AppendLine(Row("Disk:", diskText));
+                info.AppendLine(Row("Serial:", serial));
                 info.AppendLine();
-                info.AppendLine("Drive Label:");
-                info.AppendLine(driveInfo.VolumeLabel);
+                info.AppendLine(Row("Size:", FormatBytes(driveInfo.TotalSize)));
+                info.AppendLine(Row("Used:", FormatBytes(usedBytes)));
+                info.AppendLine(Row("Free:", $"{FormatBytes(driveInfo.AvailableFreeSpace)} ({freePercent:0}% free)"));
                 info.AppendLine();
-                info.AppendLine("Drive ID:");
-                info.AppendLine(disk["VolumeSerialNumber"].ToString());
-                info.AppendLine();
-                info.AppendLine("Drive Size:");
-                info.AppendLine(FormatBytes(driveInfo.TotalSize));
-                info.AppendLine();
-                info.AppendLine("Free Space:");
-                info.AppendLine(FormatBytes(driveInfo.AvailableFreeSpace));
+                info.AppendLine(Row("Protected:", IsDriveProtected(driveLetter) ? "Yes 🔒" : "No"));
+                info.AppendLine(Row("Windows:", IsWindowsInstallation(driveSelected) ? "Yes ★" : "No"));
 
                 Drive_Info.Text = info.ToString();
 
