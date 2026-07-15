@@ -56,6 +56,14 @@ namespace Cloned_GPT_Drive___Boot_Fix
         {
             InitializeComponent();
 
+            // A fresh settings store can mean a version upgrade rather than a true first
+            // run — user settings live in a per-version folder, so pull the previous
+            // version's values (protected drives!) forward before deciding anything.
+            if (Properties.Settings.Default.IsFirstRun)
+            {
+                try { Properties.Settings.Default.Upgrade(); } catch { }
+            }
+
             // Initialize protected drives collection if null
             if (Properties.Settings.Default.ProtectedDrives == null)
             {
@@ -131,8 +139,10 @@ namespace Cloned_GPT_Drive___Boot_Fix
                     system32 = System.IO.Path.Combine(windowsDir, "Sysnative");
                 }
 
+                // Check the config DIRECTORY, not the SYSTEM hive file inside it — the hive
+                // is ACL-restricted and File.Exists reports false on access-denied
                 return File.Exists(System.IO.Path.Combine(system32, "ntoskrnl.exe"))
-                    && File.Exists(System.IO.Path.Combine(system32, "config", "SYSTEM"))
+                    && Directory.Exists(System.IO.Path.Combine(system32, "config"))
                     && File.Exists(System.IO.Path.Combine(windowsDir, "explorer.exe"));
             }
             catch
@@ -160,13 +170,19 @@ namespace Cloned_GPT_Drive___Boot_Fix
                 DriveInfo driveInfo = new DriveInfo(drive);
                 if (driveInfo.IsReady)
                 {
-                    // Markers go at the END so the drive letter stays first; the 🪟 emoji
+                    // Markers go at the END, tight after the name/label; the 🪟 emoji
                     // is too new for the default font and rendered as a square
-                    string windowsMarker = IsWindowsInstallation(drive) ? "   ★ Windows" : "";
-                    string networkMarker = driveInfo.DriveType == DriveType.Network ? "   (Network)" : "";
-                    string protectedMarker = IsDriveProtected(drive) ? "   🔒" : "";
-                    string display = driveInfo.Name + "     " + driveInfo.VolumeLabel + windowsMarker + networkMarker + protectedMarker;
-                    DriveSelection_ddbox.Items.Add(display);
+                    var displayParts = new List<string> { driveInfo.Name };
+                    if (!string.IsNullOrEmpty(driveInfo.VolumeLabel))
+                        displayParts.Add(driveInfo.VolumeLabel);
+                    if (IsWindowsInstallation(drive))
+                        displayParts.Add("★ Windows");
+                    if (driveInfo.DriveType == DriveType.Network)
+                        displayParts.Add("(Network)");
+                    if (IsDriveProtected(drive))
+                        displayParts.Add("🔒");
+
+                    DriveSelection_ddbox.Items.Add(string.Join("  ", displayParts));
                 }
             }
 
