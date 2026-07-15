@@ -775,8 +775,11 @@ namespace Cloned_GPT_Drive___Boot_Fix
             }
         }
 
-        private void Refresh_btn_Click(object sender, RoutedEventArgs e)
+        private async void Refresh_btn_Click(object sender, RoutedEventArgs e)
         {
+            Refresh_btn.IsEnabled = false;
+            FixBoot_btn.IsEnabled = false;
+
             try
             {
                 StatusBox.Text = "Getting volumes...";
@@ -785,7 +788,8 @@ namespace Cloned_GPT_Drive___Boot_Fix
                 // Refresh the drive dropdowns too, in case a drive was just connected
                 RefreshDriveDropdowns();
 
-                string listoutput = ExecuteDiskpartCommand("list vol");
+                // Run the (slow, blocking) diskpart call on a background thread so the UI stays responsive
+                string listoutput = await Task.Run(() => ExecuteDiskpartCommand("list vol"));
 
                 StatusBox.Text = "";
                 StatusBox.AppendText(DeleteLines(listoutput, 11));
@@ -810,6 +814,11 @@ namespace Cloned_GPT_Drive___Boot_Fix
                 StatusBox.Text = "Error getting volumes: " + ex.Message;
                 SetProgress("Error refreshing volumes.", 0);
                 MessageBox.Show("Failed to get volumes. Make sure you run this application as Administrator.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            finally
+            {
+                Refresh_btn.IsEnabled = true;
+                FixBoot_btn.IsEnabled = true;
             }
         }
 
