@@ -72,6 +72,7 @@ namespace Cloned_GPT_Drive___Boot_Fix
             }
 
             RefreshDriveDropdowns();
+            ProtectNetworkDrives();
             RefreshProtectedDrivesList();
 
             // Initial refresh of volumes on launch
@@ -143,10 +144,11 @@ namespace Cloned_GPT_Drive___Boot_Fix
                 DriveInfo driveInfo = new DriveInfo(drive);
                 if (driveInfo.IsReady)
                 {
-                    // ★ marker goes at the END so the drive letter stays first; the 🪟 emoji
+                    // Markers go at the END so the drive letter stays first; the 🪟 emoji
                     // is too new for the default font and rendered as a square
                     string windowsMarker = IsWindowsInstallation(drive) ? "   ★ Windows" : "";
-                    string display = driveInfo.Name + "     " + driveInfo.VolumeLabel + windowsMarker;
+                    string networkMarker = driveInfo.DriveType == DriveType.Network ? "   (Network)" : "";
+                    string display = driveInfo.Name + "     " + driveInfo.VolumeLabel + windowsMarker + networkMarker;
                     DriveSelection_ddbox.Items.Add(display);
                 }
             }
@@ -168,6 +170,37 @@ namespace Cloned_GPT_Drive___Boot_Fix
             {
                 UnusedDriveSelection_ddbox.Items.Add(drive + ":\\"); // add unused drive letters to the combo box
             }
+        }
+
+        /// <summary>
+        /// Ensures all mapped network drives are always in the protected list — they are
+        /// never valid targets for cleaning/formatting through this tool.
+        /// </summary>
+        private void ProtectNetworkDrives()
+        {
+            try
+            {
+                bool added = false;
+
+                foreach (var drive in Environment.GetLogicalDrives())
+                {
+                    try
+                    {
+                        var driveInfo = new DriveInfo(drive);
+                        if (driveInfo.DriveType == DriveType.Network
+                            && !Properties.Settings.Default.ProtectedDrives.Contains(drive))
+                        {
+                            Properties.Settings.Default.ProtectedDrives.Add(drive);
+                            added = true;
+                        }
+                    }
+                    catch { }
+                }
+
+                if (added)
+                    Properties.Settings.Default.Save();
+            }
+            catch { }
         }
 
         /// <summary>
@@ -202,28 +235,32 @@ namespace Cloned_GPT_Drive___Boot_Fix
             if (Properties.Settings.Default.ProtectedDrives == null)
                 return;
 
-            var protectedInfo = new List<Tuple<string, int?, string>>();
+            var protectedInfo = new List<Tuple<string, int?, string, bool>>();
 
             foreach (string drive in Properties.Settings.Default.ProtectedDrives)
             {
                 string letter = drive.Substring(0, 1).ToUpper();
-                int? diskNumber = GetDiskNumberForLetter(letter);
 
                 string label = "";
+                bool isNetwork = false;
                 try
                 {
                     var driveInfo = new DriveInfo(letter + ":\\");
+                    isNetwork = driveInfo.DriveType == DriveType.Network;
                     if (driveInfo.IsReady)
                         label = driveInfo.VolumeLabel;
                 }
                 catch { }
 
-                protectedInfo.Add(Tuple.Create(letter, diskNumber, label));
+                int? diskNumber = isNetwork ? null : GetDiskNumberForLetter(letter);
+
+                protectedInfo.Add(Tuple.Create(letter, diskNumber, label, isNetwork));
             }
 
-            foreach (var info in protectedInfo.OrderBy(t => t.Item2 ?? int.MaxValue).ThenBy(t => t.Item1))
+            // Local disks first (sorted by disk number), network drives at the bottom
+            foreach (var info in protectedInfo.OrderBy(t => t.Item4).ThenBy(t => t.Item2 ?? int.MaxValue).ThenBy(t => t.Item1))
             {
-                string diskText = info.Item2.HasValue ? "Disk " + info.Item2.Value : "Disk ?";
+                string diskText = info.Item4 ? "Network" : (info.Item2.HasValue ? "Disk " + info.Item2.Value : "Disk ?");
                 string labelText = string.IsNullOrEmpty(info.Item3) ? "" : "  " + info.Item3;
                 string display = $"{diskText} — {info.Item1}:\\{labelText}";
 
@@ -875,6 +912,18 @@ namespace Cloned_GPT_Drive___Boot_Fix
                         return;
                 }
             }
+
+            // Final confirmation summarizing exactly what will happen
+            string tempLetter = UnusedDriveSelection_ddbox.SelectedItem.ToString().Substring(0, 1);
+            string windowsRoot = ExtractDriveLetter(DriveSelection_ddbox.SelectedItem.ToString()) + @":\";
+            string confirmMessage = "Fix Boot is ready to run:\n\n" +
+                $"  • Windows installation:  {windowsRoot}Windows\n" +
+                $"  • EFI volume:  {volumeSelector}\n" +
+                $"  • Temporary letter:  {tempLetter}:\n\n" +
+                "The boot files on the selected EFI volume will be rebuilt (bcdboot).\n\nProceed?";
+
+            if (MessageBox.Show(confirmMessage, "Confirm Fix Boot", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+                return;
 
             try
             {
