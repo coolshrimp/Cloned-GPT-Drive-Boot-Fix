@@ -120,9 +120,11 @@ namespace Cloned_GPT_Drive___Boot_Fix
                 DriveInfo driveInfo = new DriveInfo(drive);
                 if (driveInfo.IsReady)
                 {
+                    // ★ marker goes at the END so the drive letter stays first; the 🪟 emoji
+                    // is too new for the default font and rendered as a square
                     bool hasWindows = Directory.Exists(System.IO.Path.Combine(drive, "Windows"));
-                    string windowsIcon = hasWindows ? "🪟 " : "";
-                    string display = windowsIcon + driveInfo.Name + "     " + driveInfo.VolumeLabel;
+                    string windowsMarker = hasWindows ? "   ★ Windows" : "";
+                    string display = driveInfo.Name + "     " + driveInfo.VolumeLabel + windowsMarker;
                     DriveSelection_ddbox.Items.Add(display);
                 }
             }
@@ -147,18 +149,68 @@ namespace Cloned_GPT_Drive___Boot_Fix
         }
 
         /// <summary>
-        /// Refreshes the protected drives list box from settings
+        /// Returns the physical disk number a drive letter lives on, or null if unknown.
+        /// </summary>
+        private int? GetDiskNumberForLetter(string letter)
+        {
+            try
+            {
+                string query = $"ASSOCIATORS OF {{Win32_LogicalDisk.DeviceID='{letter}:'}} WHERE AssocClass=Win32_LogicalDiskToPartition";
+                using (var searcher = new ManagementObjectSearcher(query))
+                {
+                    foreach (ManagementObject partition in searcher.Get())
+                    {
+                        return Convert.ToInt32(partition["DiskIndex"]);
+                    }
+                }
+            }
+            catch { }
+            return null;
+        }
+
+        /// <summary>
+        /// Refreshes the protected drives list box from settings, showing which physical
+        /// disk each letter lives on and its volume label, e.g. "Disk 1 — C:\  Windows".
+        /// The raw letter ("C:\") is kept in each item's Tag for removal.
         /// </summary>
         private void RefreshProtectedDrivesList()
         {
             ProtectedDrives_ListBox.Items.Clear();
 
-            if (Properties.Settings.Default.ProtectedDrives != null)
+            if (Properties.Settings.Default.ProtectedDrives == null)
+                return;
+
+            var protectedInfo = new List<Tuple<string, int?, string>>();
+
+            foreach (string drive in Properties.Settings.Default.ProtectedDrives)
             {
-                foreach (string drive in Properties.Settings.Default.ProtectedDrives)
+                string letter = drive.Substring(0, 1).ToUpper();
+                int? diskNumber = GetDiskNumberForLetter(letter);
+
+                string label = "";
+                try
                 {
-                    ProtectedDrives_ListBox.Items.Add(drive);
+                    var driveInfo = new DriveInfo(letter + ":\\");
+                    if (driveInfo.IsReady)
+                        label = driveInfo.VolumeLabel;
                 }
+                catch { }
+
+                protectedInfo.Add(Tuple.Create(letter, diskNumber, label));
+            }
+
+            foreach (var info in protectedInfo.OrderBy(t => t.Item2 ?? int.MaxValue).ThenBy(t => t.Item1))
+            {
+                string diskText = info.Item2.HasValue ? "Disk " + info.Item2.Value : "Disk ?";
+                string labelText = string.IsNullOrEmpty(info.Item3) ? "" : "  " + info.Item3;
+                string display = $"{diskText} — {info.Item1}:\\{labelText}";
+
+                ProtectedDrives_ListBox.Items.Add(new ListBoxItem
+                {
+                    Content = display,
+                    Tag = info.Item1 + ":\\",
+                    ToolTip = display
+                });
             }
         }
 
@@ -170,7 +222,9 @@ namespace Cloned_GPT_Drive___Boot_Fix
                 return;
             }
 
-            string selectedDrive = ProtectedDrives_ListBox.SelectedItem.ToString();
+            string selectedDrive = ProtectedDrives_ListBox.SelectedItem is ListBoxItem lbi && lbi.Tag != null
+                ? lbi.Tag.ToString()
+                : ProtectedDrives_ListBox.SelectedItem.ToString();
 
             var result = MessageBox.Show(
                 $"Are you sure you want to remove protection from {selectedDrive}?\n\nThis drive will then be eligible for cleaning/formatting.",
@@ -506,6 +560,19 @@ namespace Cloned_GPT_Drive___Boot_Fix
                 if (_volumeToDisk.TryGetValue(entry.Number, out int diskNumber))
                     entry.DiskNumber = diskNumber;
 
+                // diskpart truncates labels to 11 chars ("Websites (S") — get the full
+                // label from Windows when the volume has a drive letter
+                if (!string.IsNullOrEmpty(entry.Letter))
+                {
+                    try
+                    {
+                        var driveInfo = new DriveInfo(entry.Letter + ":\\");
+                        if (driveInfo.IsReady && !string.IsNullOrEmpty(driveInfo.VolumeLabel))
+                            entry.Label = driveInfo.VolumeLabel;
+                    }
+                    catch { }
+                }
+
                 _parsedVolumes.Add(entry);
 
                 string letterDisplay = string.IsNullOrEmpty(entry.Letter) ? "--" : entry.Letter + ":";
@@ -604,6 +671,13 @@ namespace Cloned_GPT_Drive___Boot_Fix
                           ?? _parsedVolumes.FirstOrDefault(v => v.FileSystem == "FAT32" && v.Letter != selectedDriveLetter);
             }
 
+            // Clear any previous recommendation highlight before applying a new one
+            foreach (var obj in Volumes_dd.Items)
+            {
+                if (obj is ComboBoxItem previous)
+                    previous.ClearValue(BackgroundProperty);
+            }
+
             if (fat32Match == null)
                 return;
 
@@ -611,6 +685,9 @@ namespace Cloned_GPT_Drive___Boot_Fix
             {
                 if (obj is ComboBoxItem cbi && cbi.Tag?.ToString() == fat32Match.DiskpartSelector)
                 {
+                    // Green highlight marks the recommended EFI volume for the chosen drive;
+                    // it stays visible in the list even if the user picks a different one
+                    cbi.Background = new SolidColorBrush(Color.FromRgb(0xC9, 0xF0, 0xC9));
                     Volumes_dd.SelectedItem = cbi;
                     break;
                 }
@@ -779,6 +856,9 @@ namespace Cloned_GPT_Drive___Boot_Fix
 
             try
             {
+                // Jump to the Simple tab so the user sees live progress
+                MainTabs.SelectedIndex = 0;
+
                 StatusBox.Text = "";
                 StatusBox.AppendText("Assigning Drive Letter...");
                 SetProgress("Assigning temporary drive letter...", 10);

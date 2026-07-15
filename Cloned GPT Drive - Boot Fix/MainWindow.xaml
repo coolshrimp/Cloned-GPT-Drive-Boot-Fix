@@ -65,7 +65,7 @@
         <Label Content="Created By:" Canvas.Left="279" Canvas.Top="475"/>
         <Label x:Name="CreatorLink" Content="Coolshrimp Modz" Canvas.Left="343" Canvas.Top="475" Width="105" Background="White" Foreground="#FF8700E4" MouseDown="CreatorLink_MouseDown"/>
 
-        <TabControl Height="384" Canvas.Left="16" Canvas.Top="86" Width="741" RenderTransformOrigin="0.5,0.5" HorizontalAlignment="Left" VerticalAlignment="Center">
+        <TabControl x:Name="MainTabs" Height="384" Canvas.Left="16" Canvas.Top="86" Width="741" RenderTransformOrigin="0.5,0.5" HorizontalAlignment="Left" VerticalAlignment="Center">
             <TabControl.RenderTransform>
                 <TransformGroup>
                     <ScaleTransform/>
@@ -75,29 +75,35 @@
                 </TransformGroup>
             </TabControl.RenderTransform>
             <TabItem Header="Simple">
-                <TextBox x:Name="StatusBox" TextWrapping="Wrap" x:FieldModifier="public" Canvas.Left="21" Canvas.Top="82" IsReadOnly="True" Margin="0,0,1,0"/>
-            </TabItem>
+                <Grid Margin="4">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="2*"/>
+                        <ColumnDefinition Width="5"/>
+                        <ColumnDefinition Width="1*"/>
+                    </Grid.ColumnDefinitions>
 
-            <TabItem Header="Log">
-                <TextBox x:Name="CMDOutputBox" TextWrapping="Wrap" x:FieldModifier="public" Canvas.Left="21" Canvas.Top="82" IsReadOnly="True" Margin="0,0,1,0"/>
-            </TabItem>
+                    <TextBox x:Name="StatusBox" Grid.Column="0" TextWrapping="Wrap" x:FieldModifier="public" IsReadOnly="True" VerticalScrollBarVisibility="Auto"/>
 
-            <TabItem Header="Info" HorizontalAlignment="Right" Margin="0,-2,-2,0" Width="36">
-                <Grid Margin="8">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="*"/>
-                    </Grid.RowDefinitions>
+                    <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Stretch" Background="LightGray"/>
 
-                    <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,8">
-                        <TextBlock Text="Selected Drive:" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                        <TextBlock x:Name="Info_SelectedDriveText" Text="(none selected)" VerticalAlignment="Center" Margin="0,0,20,0"/>
-                        <Button x:Name="ToggleProtect_btn" Content="🔒 Protect Drive" Width="140" Height="26" Click="ToggleProtect_btn_Click"/>
-                    </StackPanel>
+                    <Grid Grid.Column="2" Margin="4,0,0,0">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
 
-                    <GroupBox Grid.Row="1" Header="Drive Details">
-                        <TextBox x:Name="Drive_Info" TextWrapping="Wrap" x:FieldModifier="public" IsReadOnly="True" BorderThickness="0" VerticalScrollBarVisibility="Auto"/>
-                    </GroupBox>
+                        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,6">
+                            <TextBlock Text="Selected Drive:" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <TextBlock x:Name="Info_SelectedDriveText" Text="(none selected)" VerticalAlignment="Center"/>
+                        </StackPanel>
+
+                        <Button x:Name="ToggleProtect_btn" Grid.Row="1" Content="🔒 Protect Drive" Height="26" Margin="0,0,0,8" Click="ToggleProtect_btn_Click"/>
+
+                        <GroupBox Grid.Row="2" Header="Drive Details">
+                            <TextBox x:Name="Drive_Info" TextWrapping="Wrap" x:FieldModifier="public" IsReadOnly="True" BorderThickness="0" VerticalScrollBarVisibility="Auto"/>
+                        </GroupBox>
+                    </Grid>
                 </Grid>
             </TabItem>
 
@@ -185,6 +191,10 @@
                 </ScrollViewer>
             </TabItem>
 
+            <TabItem Header="Log">
+                <TextBox x:Name="CMDOutputBox" TextWrapping="Wrap" x:FieldModifier="public" IsReadOnly="True" VerticalScrollBarVisibility="Auto"/>
+            </TabItem>
+
             <TabItem Header="Extras">
                 <Grid Margin="5">
                     <Grid.RowDefinitions>
@@ -196,15 +206,15 @@
                     <!-- Disk Operations Section -->
                     <StackPanel Grid.Row="0" Margin="5">
                         <Label Content="Disk Operations" FontWeight="Bold" FontSize="14"/>
-                        <StackPanel Orientation="Horizontal" Margin="0,5,0,0">
-                            <Button x:Name="Get_Disks_btn" Content="🔄 List Disks" Height="23" Width="90" Click="Get_Disks_btn_Click" Margin="0,0,5,0"/>
-                            <Label Content="Select Disk:" VerticalAlignment="Center" Margin="5,0,5,0"/>
-                            <ComboBox x:Name="Disk_list_dd" Width="120" VerticalAlignment="Center" Margin="0,0,5,0"/>
-                            <Button x:Name="ConvertToGPT_btn" Content="Convert To GPT" Width="98" Click="ConvertToGPT_btn_Click" Margin="0,0,5,0"/>
-                            <Button x:Name="Clean_Disk_btn" Content="Clean Disk" Width="75" Click="Clean_Disk_btn_Click" Margin="0,0,5,0"/>
-                            <Button x:Name="Show_disk_manager_btn" Content="Show Disk Manager" Width="117" Click="Show_disk_manager_btn_Click" Margin="0,0,5,0"/>
-                            <Button x:Name="ProtectDisk_btn" Content="Protect This Disk" Width="120" Click="ProtectDisk_btn_Click"/>
-                        </StackPanel>
+                        <WrapPanel Margin="0,5,0,0">
+                            <Button x:Name="Get_Disks_btn" Content="🔄 List Disks" Height="23" Width="90" Click="Get_Disks_btn_Click" Margin="0,0,5,5"/>
+                            <Label Content="Select Disk:" VerticalAlignment="Center" Margin="5,0,5,5"/>
+                            <ComboBox x:Name="Disk_list_dd" Width="120" VerticalAlignment="Center" Margin="0,0,5,5"/>
+                            <Button x:Name="ConvertToGPT_btn" Content="Convert To GPT" Height="23" Width="98" Click="ConvertToGPT_btn_Click" Margin="0,0,5,5"/>
+                            <Button x:Name="Clean_Disk_btn" Content="Clean Disk" Height="23" Width="75" Click="Clean_Disk_btn_Click" Margin="0,0,5,5"/>
+                            <Button x:Name="Show_disk_manager_btn" Content="Show Disk Manager" Height="23" Width="117" Click="Show_disk_manager_btn_Click" Margin="0,0,5,5"/>
+                            <Button x:Name="ProtectDisk_btn" Content="Protect This Disk" Height="23" Width="110" Click="ProtectDisk_btn_Click" Margin="0,0,5,5"/>
+                        </WrapPanel>
                     </StackPanel>
 
                     <!-- Main content area with splitter -->
