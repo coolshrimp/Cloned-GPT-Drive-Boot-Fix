@@ -137,6 +137,12 @@ namespace Cloned_GPT_Drive___Boot_Fix
         /// </summary>
         private void RefreshDriveDropdowns()
         {
+            // Remember the current selection so refreshing (e.g. after protecting a
+            // drive) doesn't wipe the user's choice
+            string previousLetter = DriveSelection_ddbox.SelectedItem != null
+                ? ExtractDriveLetter(DriveSelection_ddbox.SelectedItem.ToString())
+                : null;
+
             DriveSelection_ddbox.Items.Clear();
 
             foreach (var drive in Environment.GetLogicalDrives())
@@ -148,8 +154,21 @@ namespace Cloned_GPT_Drive___Boot_Fix
                     // is too new for the default font and rendered as a square
                     string windowsMarker = IsWindowsInstallation(drive) ? "   ★ Windows" : "";
                     string networkMarker = driveInfo.DriveType == DriveType.Network ? "   (Network)" : "";
-                    string display = driveInfo.Name + "     " + driveInfo.VolumeLabel + windowsMarker + networkMarker;
+                    string protectedMarker = IsDriveProtected(drive) ? "   🔒" : "";
+                    string display = driveInfo.Name + "     " + driveInfo.VolumeLabel + windowsMarker + networkMarker + protectedMarker;
                     DriveSelection_ddbox.Items.Add(display);
+                }
+            }
+
+            if (!string.IsNullOrEmpty(previousLetter))
+            {
+                foreach (var item in DriveSelection_ddbox.Items)
+                {
+                    if (ExtractDriveLetter(item.ToString()) == previousLetter)
+                    {
+                        DriveSelection_ddbox.SelectedItem = item;
+                        break;
+                    }
                 }
             }
 
@@ -296,6 +315,7 @@ namespace Cloned_GPT_Drive___Boot_Fix
                 Properties.Settings.Default.ProtectedDrives.Remove(selectedDrive);
                 Properties.Settings.Default.Save();
                 RefreshProtectedDrivesList();
+                RefreshDriveDropdowns();
             }
         }
 
@@ -339,6 +359,7 @@ namespace Cloned_GPT_Drive___Boot_Fix
                 }
 
                 RefreshProtectedDrivesList();
+                RefreshDriveDropdowns();
 
                 if (DriveSelection_ddbox.SelectedItem != null)
                 {
@@ -1128,6 +1149,7 @@ namespace Cloned_GPT_Drive___Boot_Fix
                     }
                     Properties.Settings.Default.Save();
                     RefreshProtectedDrivesList();
+                    RefreshDriveDropdowns();
                     UpdateProtectButtonState(driveLetter);
                 }
             }
@@ -1146,6 +1168,7 @@ namespace Cloned_GPT_Drive___Boot_Fix
                     {
                         AddProtectedDrive(drive);
                     }
+                    RefreshDriveDropdowns();
                     UpdateProtectButtonState(driveLetter);
                 }
             }
@@ -1297,6 +1320,7 @@ namespace Cloned_GPT_Drive___Boot_Fix
                     {
                         AddProtectedDrive(drive);
                     }
+                    RefreshDriveDropdowns();
                     MessageBox.Show($"{drivesOnDisk.Count} drive(s) are now protected.", "Success", MessageBoxButton.OK, MessageBoxImage.Information);
                 }
             }
