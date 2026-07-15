@@ -108,6 +108,29 @@ namespace Cloned_GPT_Drive___Boot_Fix
         }
 
         /// <summary>
+        /// Returns true only if the drive holds a real (bootable/cloned) Windows installation,
+        /// not just any folder named "Windows" (e.g. an archive or VM storage folder).
+        /// Checks for the NT kernel, the SYSTEM registry hive, and explorer.exe.
+        /// </summary>
+        private bool IsWindowsInstallation(string driveRoot)
+        {
+            try
+            {
+                string windowsDir = System.IO.Path.Combine(driveRoot, "Windows");
+                if (!Directory.Exists(windowsDir))
+                    return false;
+
+                return File.Exists(System.IO.Path.Combine(windowsDir, "System32", "ntoskrnl.exe"))
+                    && File.Exists(System.IO.Path.Combine(windowsDir, "System32", "config", "SYSTEM"))
+                    && File.Exists(System.IO.Path.Combine(windowsDir, "explorer.exe"));
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
         /// Populates the cloned-drive dropdown and the list of currently unused drive letters.
         /// Safe to call again later (e.g. after plugging in a drive) since it clears first.
         /// </summary>
@@ -122,8 +145,7 @@ namespace Cloned_GPT_Drive___Boot_Fix
                 {
                     // ★ marker goes at the END so the drive letter stays first; the 🪟 emoji
                     // is too new for the default font and rendered as a square
-                    bool hasWindows = Directory.Exists(System.IO.Path.Combine(drive, "Windows"));
-                    string windowsMarker = hasWindows ? "   ★ Windows" : "";
+                    string windowsMarker = IsWindowsInstallation(drive) ? "   ★ Windows" : "";
                     string display = driveInfo.Name + "     " + driveInfo.VolumeLabel + windowsMarker;
                     DriveSelection_ddbox.Items.Add(display);
                 }
@@ -734,9 +756,9 @@ namespace Cloned_GPT_Drive___Boot_Fix
                     DriveInfo driveInfo = new DriveInfo(drive);
                     if (driveInfo.IsReady)
                     {
-                        // Check if it's the system drive or a drive with Windows installed
+                        // Check if it's the system drive or a drive with a real Windows installation
                         bool isSystemDrive = drive.StartsWith(System.IO.Path.GetPathRoot(Environment.SystemDirectory));
-                        bool hasWindows = Directory.Exists(System.IO.Path.Combine(drive, "Windows"));
+                        bool hasWindows = IsWindowsInstallation(drive);
 
                         if (isSystemDrive || hasWindows)
                         {
