@@ -93,7 +93,7 @@
                         <ColumnDefinition Width="1*"/>
                     </Grid.ColumnDefinitions>
 
-                    <TextBox x:Name="StatusBox" Grid.Column="0" TextWrapping="Wrap" x:FieldModifier="public" IsReadOnly="True" VerticalScrollBarVisibility="Auto"/>
+                    <TextBox x:Name="StatusBox" Grid.Column="0" TextWrapping="NoWrap" x:FieldModifier="public" IsReadOnly="True" FontFamily="Consolas" FontSize="12" Padding="4" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"/>
 
                     <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Stretch" Background="LightGray"/>
 
@@ -203,7 +203,7 @@
             </TabItem>
 
             <TabItem Header="Log">
-                <TextBox x:Name="CMDOutputBox" TextWrapping="Wrap" x:FieldModifier="public" IsReadOnly="True" VerticalScrollBarVisibility="Auto"/>
+                <TextBox x:Name="CMDOutputBox" TextWrapping="NoWrap" x:FieldModifier="public" IsReadOnly="True" FontFamily="Consolas" FontSize="12" Padding="4" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"/>
             </TabItem>
 
             <TabItem Header="Extras">
@@ -247,7 +247,7 @@
 
                         <!-- Disk Info Box -->
                         <GroupBox Grid.Column="0" Header="Disk Information" Margin="0,0,2,0">
-                            <TextBox x:Name="ExtrasInfoBox" TextWrapping="Wrap" x:FieldModifier="public" IsReadOnly="True" VerticalScrollBarVisibility="Auto"/>
+                            <TextBox x:Name="ExtrasInfoBox" TextWrapping="NoWrap" x:FieldModifier="public" IsReadOnly="True" FontFamily="Consolas" FontSize="12" Padding="4" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"/>
                         </GroupBox>
 
                         <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Stretch" Background="LightGray"/>
