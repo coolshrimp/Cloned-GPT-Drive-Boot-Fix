@@ -91,6 +91,19 @@ namespace Cloned_GPT_Drive___Boot_Fix
         }
 
         /// <summary>
+        /// Extracts the drive letter (e.g. "C") from a combo box display string, ignoring any
+        /// leading icon prefix (such as the 🪟 Windows indicator).
+        /// </summary>
+        private string ExtractDriveLetter(string comboBoxText)
+        {
+            if (string.IsNullOrEmpty(comboBoxText))
+                return string.Empty;
+
+            var match = Regex.Match(comboBoxText, @"[A-Za-z](?=:)");
+            return match.Success ? match.Value : comboBoxText.Substring(0, 1);
+        }
+
+        /// <summary>
         /// Populates the cloned-drive dropdown and the list of currently unused drive letters.
         /// Safe to call again later (e.g. after plugging in a drive) since it clears first.
         /// </summary>
@@ -103,7 +116,9 @@ namespace Cloned_GPT_Drive___Boot_Fix
                 DriveInfo driveInfo = new DriveInfo(drive);
                 if (driveInfo.IsReady)
                 {
-                    string display = driveInfo.Name + "     " + driveInfo.VolumeLabel;
+                    bool hasWindows = Directory.Exists(System.IO.Path.Combine(drive, "Windows"));
+                    string windowsIcon = hasWindows ? "🪟 " : "";
+                    string display = windowsIcon + driveInfo.Name + "     " + driveInfo.VolumeLabel;
                     DriveSelection_ddbox.Items.Add(display);
                 }
             }
@@ -210,7 +225,7 @@ namespace Cloned_GPT_Drive___Boot_Fix
 
                 if (DriveSelection_ddbox.SelectedItem != null)
                 {
-                    string driveLetter = DriveSelection_ddbox.SelectedItem.ToString().Substring(0, 1);
+                    string driveLetter = ExtractDriveLetter(DriveSelection_ddbox.SelectedItem.ToString());
                     UpdateProtectButtonState(driveLetter);
                 }
 
@@ -392,7 +407,7 @@ namespace Cloned_GPT_Drive___Boot_Fix
             if (DriveSelection_ddbox.SelectedItem == null || _parsedVolumes.Count == 0)
                 return;
 
-            string selectedDriveLetter = DriveSelection_ddbox.SelectedItem.ToString().Substring(0, 1).ToUpper();
+            string selectedDriveLetter = ExtractDriveLetter(DriveSelection_ddbox.SelectedItem.ToString()).ToUpper();
 
             int matchIndex = _parsedVolumes.FindIndex(v => v.Letter == selectedDriveLetter);
 
@@ -606,7 +621,7 @@ namespace Cloned_GPT_Drive___Boot_Fix
                 p1.StartInfo.Verb = "runas";
                 p1.Start();
 
-                string windowsDrive = DriveSelection_ddbox.SelectedItem.ToString().Substring(0, 3);
+                string windowsDrive = ExtractDriveLetter(DriveSelection_ddbox.SelectedItem.ToString()) + @":\";
                 string bootDrive = UnusedDriveSelection_ddbox.SelectedItem.ToString().Substring(0, 2).ToLower();
                 string bcdbootCmd = $"bcdboot {windowsDrive}Windows /s {bootDrive} /f UEFI";
 
@@ -677,9 +692,9 @@ namespace Cloned_GPT_Drive___Boot_Fix
 
             try
             {
-                string driveSelected = DriveSelection_ddbox.SelectedItem.ToString().Substring(0, 3);
+                string driveLetter = ExtractDriveLetter(DriveSelection_ddbox.SelectedItem.ToString());
+                string driveSelected = driveLetter + @":\";
                 DriveInfo driveInfo = new DriveInfo(driveSelected);
-                string driveLetter = DriveSelection_ddbox.SelectedItem.ToString().Substring(0, 1);
 
                 ManagementObject disk = new ManagementObject("win32_logicaldisk.deviceid=\"" + driveLetter + ":\"");
                 disk.Get();
@@ -740,8 +755,8 @@ namespace Cloned_GPT_Drive___Boot_Fix
                 return;
             }
 
-            string driveSelected = DriveSelection_ddbox.SelectedItem.ToString().Substring(0, 3);
-            string driveLetter = DriveSelection_ddbox.SelectedItem.ToString().Substring(0, 1);
+            string driveLetter = ExtractDriveLetter(DriveSelection_ddbox.SelectedItem.ToString());
+            string driveSelected = driveLetter + @":\";
 
             // Protecting/unprotecting always applies to the whole disk (the drive itself and all its volumes)
             List<string> drivesOnSameDisk = GetDriveLettersOnSameDisk(driveLetter);
