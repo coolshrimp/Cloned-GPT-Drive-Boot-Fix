@@ -169,7 +169,98 @@ namespace Cloned_GPT_Drive___Boot_Fix
 
         private void RefreshProtected_btn_Click(object sender, RoutedEventArgs e)
         {
+            // Rescan all connected drives and make sure system/Windows drives are protected
+            List<string> newlyProtected = new List<string>();
+
+            foreach (var drive in Environment.GetLogicalDrives())
+            {
+                try
+                {
+                    DriveInfo driveInfo = new DriveInfo(drive);
+                    if (!driveInfo.IsReady)
+                        continue;
+
+                    bool isSystemDrive = drive.StartsWith(System.IO.Path.GetPathRoot(Environment.SystemDirectory));
+                    bool hasWindows = Directory.Exists(System.IO.Path.Combine(drive, "Windows"));
+
+                    if (isSystemDrive || hasWindows)
+                    {
+                        if (Properties.Settings.Default.ProtectedDrives == null)
+                        {
+                            Properties.Settings.Default.ProtectedDrives = new System.Collections.Specialized.StringCollection();
+                        }
+
+                        if (!Properties.Settings.Default.ProtectedDrives.Contains(drive))
+                        {
+                            Properties.Settings.Default.ProtectedDrives.Add(drive);
+                            newlyProtected.Add(drive);
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            if (newlyProtected.Count > 0)
+            {
+                Properties.Settings.Default.Save();
+            }
+
             RefreshProtectedDrivesList();
+
+            if (DriveSelection_ddbox.SelectedItem != null)
+            {
+                string driveLetter = DriveSelection_ddbox.SelectedItem.ToString().Substring(0, 1);
+                UpdateProtectButtonState(driveLetter);
+            }
+
+            if (newlyProtected.Count > 0)
+            {
+                MessageBox.Show($"Rescan complete. {newlyProtected.Count} system drive(s) were newly protected:\n\n" + string.Join("\n", newlyProtected),
+                    "Rescan Complete", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+        }
+
+        /// <summary>
+        /// Returns every drive letter (e.g. "C:\") that lives on the same physical disk as the given drive letter.
+        /// </summary>
+        private List<string> GetDriveLettersOnSameDisk(string driveLetter)
+        {
+            List<string> result = new List<string>();
+            string normalizedLetter = driveLetter.Substring(0, 1).ToUpper();
+
+            try
+            {
+                string query = $"ASSOCIATORS OF {{Win32_LogicalDisk.DeviceID='{normalizedLetter}:'}} WHERE AssocClass=Win32_LogicalDiskToPartition";
+                using (var searcher = new ManagementObjectSearcher(query))
+                {
+                    foreach (ManagementObject partition in searcher.Get())
+                    {
+                        string partitionQuery = $"ASSOCIATORS OF {{Win32_DiskPartition.DeviceID='{partition["DeviceID"]}'}} WHERE AssocClass=Win32_LogicalDiskToPartition";
+                        using (var logicalDiskSearcher = new ManagementObjectSearcher(partitionQuery))
+                        {
+                            foreach (ManagementObject logicalDisk in logicalDiskSearcher.Get())
+                            {
+                                string letter = logicalDisk["DeviceID"].ToString() + "\\";
+                                if (!result.Contains(letter))
+                                {
+                                    result.Add(letter);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // Fall back to just the selected drive if WMI lookups fail
+            }
+
+            if (result.Count == 0)
+            {
+                result.Add(normalizedLetter + ":\\");
+            }
+
+            return result;
         }
 
         /// <summary>
@@ -388,7 +479,7 @@ namespace Cloned_GPT_Drive___Boot_Fix
 
             message.AppendLine();
             message.AppendLine("System drives will be automatically protected from formatting.");
-            message.AppendLine("You can manage protected drives in the Extras tab.");
+            message.AppendLine("You can manage protected drives in the List Disks tab.");
 
             MessageBox.Show(message.ToString(), "First Run - Drive Protection", MessageBoxButton.OK, MessageBoxImage.Information);
 
@@ -641,17 +732,24 @@ namespace Cloned_GPT_Drive___Boot_Fix
             string driveSelected = DriveSelection_ddbox.SelectedItem.ToString().Substring(0, 3);
             string driveLetter = DriveSelection_ddbox.SelectedItem.ToString().Substring(0, 1);
 
+            // Protecting/unprotecting always applies to the whole disk (the drive itself and all its volumes)
+            List<string> drivesOnSameDisk = GetDriveLettersOnSameDisk(driveLetter);
+
             if (IsDriveProtected(driveLetter))
             {
+                string driveList = string.Join("\n", drivesOnSameDisk.Select(d => "  • " + d));
                 var result = MessageBox.Show(
-                    $"Are you sure you want to remove protection from {driveSelected}?\n\nThis drive will then be eligible for cleaning/formatting.",
+                    $"Are you sure you want to remove protection from this disk?\n\nThe following drive(s) will become eligible for cleaning/formatting:\n\n{driveList}",
                     "Remove Protection?",
                     MessageBoxButton.YesNo,
                     MessageBoxImage.Question);
 
                 if (result == MessageBoxResult.Yes)
                 {
-                    Properties.Settings.Default.ProtectedDrives.Remove(driveSelected);
+                    foreach (string drive in drivesOnSameDisk)
+                    {
+                        Properties.Settings.Default.ProtectedDrives.Remove(drive);
+                    }
                     Properties.Settings.Default.Save();
                     RefreshProtectedDrivesList();
                     UpdateProtectButtonState(driveLetter);
@@ -659,8 +757,21 @@ namespace Cloned_GPT_Drive___Boot_Fix
             }
             else
             {
-                AddProtectedDrive(driveSelected);
-                UpdateProtectButtonState(driveLetter);
+                string driveList = string.Join("\n", drivesOnSameDisk.Select(d => "  • " + d));
+                var result = MessageBox.Show(
+                    $"This will protect the entire disk, including all its drive(s):\n\n{driveList}\n\nProtected drives cannot be cleaned or formatted through this tool.",
+                    "Protect This Disk?",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Question);
+
+                if (result == MessageBoxResult.Yes)
+                {
+                    foreach (string drive in drivesOnSameDisk)
+                    {
+                        AddProtectedDrive(drive);
+                    }
+                    UpdateProtectButtonState(driveLetter);
+                }
             }
         }
 
@@ -837,7 +948,7 @@ namespace Cloned_GPT_Drive___Boot_Fix
 
             if (hasProtectedDrive)
             {
-                MessageBox.Show($"Cannot convert {selectedDisk} to GPT.\n\nThis disk contains protected system drives.\n\nYou can manage protected drives in the Extras tab.", 
+                MessageBox.Show($"Cannot convert {selectedDisk} to GPT.\n\nThis disk contains protected system drives.\n\nYou can manage protected drives in the List Disks tab.", 
                     "Protected Drive", MessageBoxButton.OK, MessageBoxImage.Error);
                 return;
             }
@@ -923,7 +1034,7 @@ namespace Cloned_GPT_Drive___Boot_Fix
                 }
                 message.AppendLine();
                 message.AppendLine("Protected drives cannot be cleaned to prevent data loss.");
-                message.AppendLine("You can manage protected drives in the Extras tab.");
+                message.AppendLine("You can manage protected drives in the List Disks tab.");
 
                 MessageBox.Show(message.ToString(), "Protected Drive - Cannot Clean", MessageBoxButton.OK, MessageBoxImage.Error);
                 return;

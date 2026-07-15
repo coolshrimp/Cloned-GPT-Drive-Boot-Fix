@@ -5,7 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:Cloned_GPT_Drive___Boot_Fix"
         mc:Ignorable="d"
-        Title="Cloned GPT Drive - Boot Fix" Height="550" Width="769" ResizeMode="NoResize">
+        Title="Cloned GPT Drive - Boot Fix" Height="550" Width="772" ResizeMode="NoResize">
 
     <Window.Resources>
         <Style x:Key="GuideTitle" TargetType="TextBlock">
@@ -82,7 +82,7 @@
                 <TextBox x:Name="CMDOutputBox" TextWrapping="Wrap" x:FieldModifier="public" Canvas.Left="21" Canvas.Top="82" IsReadOnly="True" Margin="0,0,1,0"/>
             </TabItem>
 
-            <TabItem Header="Info">
+            <TabItem Header="Info" HorizontalAlignment="Right" Margin="0,-2,-2,0" Width="36">
                 <Grid Margin="8">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
@@ -173,7 +173,7 @@
                                 <TextBlock TextWrapping="Wrap" Margin="12,2,0,0">• System drives are automatically protected on first run</TextBlock>
                                 <TextBlock TextWrapping="Wrap" Margin="12,2,0,0">• Multiple confirmations are required for destructive operations</TextBlock>
                                 <TextBlock TextWrapping="Wrap" Margin="0,6,0,0" FontStyle="Italic">
-                                    Manage protected drives in the "Extras" tab.
+                                    Manage protected drives in the "List Disks" tab.
                                 </TextBlock>
                             </StackPanel>
                         </Border>
@@ -185,7 +185,7 @@
                 </ScrollViewer>
             </TabItem>
 
-            <TabItem Header="Extras">
+            <TabItem Header="List Disks">
                 <Grid Margin="5">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
@@ -197,13 +197,13 @@
                     <StackPanel Grid.Row="0" Margin="5">
                         <Label Content="Disk Operations" FontWeight="Bold" FontSize="14"/>
                         <StackPanel Orientation="Horizontal" Margin="0,5,0,0">
-                            <Button x:Name="Get_Disks_btn" Content="Get Disks" Height="23" Width="76" Click="Get_Disks_btn_Click" Margin="0,0,5,0"/>
+                            <Button x:Name="Get_Disks_btn" Content="🔄 List Disks" Height="23" Width="90" Click="Get_Disks_btn_Click" Margin="0,0,5,0"/>
                             <Label Content="Select Disk:" VerticalAlignment="Center" Margin="5,0,5,0"/>
                             <ComboBox x:Name="Disk_list_dd" Width="120" VerticalAlignment="Center" Margin="0,0,5,0"/>
                             <Button x:Name="ConvertToGPT_btn" Content="Convert To GPT" Width="98" Click="ConvertToGPT_btn_Click" Margin="0,0,5,0"/>
                             <Button x:Name="Clean_Disk_btn" Content="Clean Disk" Width="75" Click="Clean_Disk_btn_Click" Margin="0,0,5,0"/>
                             <Button x:Name="Show_disk_manager_btn" Content="Show Disk Manager" Width="117" Click="Show_disk_manager_btn_Click" Margin="0,0,5,0"/>
-                            <Button x:Name="ProtectDisk_btn" Content="Protect Disk's Drives" Width="120" Click="ProtectDisk_btn_Click"/>
+                            <Button x:Name="ProtectDisk_btn" Content="Protect This Disk" Width="120" Click="ProtectDisk_btn_Click"/>
                         </StackPanel>
                     </StackPanel>
 
@@ -235,7 +235,7 @@
                                 <StackPanel Grid.Row="1" Margin="5">
                                     <Label Content="Manage Protection:" FontWeight="Bold" FontSize="11" Padding="0,5,0,5"/>
                                     <Button x:Name="RemoveProtection_btn" Content="Remove Selected" Width="120" Height="25" Margin="0,5,0,5" Click="RemoveProtection_btn_Click" HorizontalAlignment="Center"/>
-                                    <Button x:Name="RefreshProtected_btn" Content="Refresh List" Width="120" Height="25" Margin="0,0,0,5" Click="RefreshProtected_btn_Click" HorizontalAlignment="Center"/>
+                                    <Button x:Name="RefreshProtected_btn" Content="🔄 Rescan &amp; Protect Drives" Width="150" Height="25" Margin="0,0,0,5" Click="RefreshProtected_btn_Click" HorizontalAlignment="Center"/>
                                     <TextBlock TextWrapping="Wrap" FontSize="10" Foreground="Gray" Margin="0,10,0,0" TextAlignment="Center">
                                         Protected drives cannot be cleaned or formatted
                                     </TextBlock>

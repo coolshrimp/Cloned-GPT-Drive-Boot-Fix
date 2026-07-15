@@ -11,7 +11,7 @@ Read the [Safety Features](#safety-features) section before use.
 
 - **Guided Boot Repair** — select your cloned Windows drive and its FAT32 EFI partition, assign a temporary letter, and repair the boot files in one click.
 - **Guide Tab** — built-in step-by-step instructions inside the app.
-- **Extras Tab** — list disks, convert a disk to GPT, clean a disk, or open Disk Management.
+- **List Disks Tab** — list disks, convert a disk to GPT, clean a disk, or open Disk Management.
 - **Protected Drives List** — mark drives (like your main OS drive) as protected so they can never be cleaned or wiped through this tool.
 - **First-Run Protection Scan** — on first launch, the app detects your system/boot drives and offers to protect them automatically.
 - **Double-confirmation on destructive actions** — Clean Disk and Convert to GPT require explicit confirmation and are blocked entirely for protected drives.
@@ -36,7 +36,7 @@ Because this tool can run destructive disk commands (`clean`, `convert gpt`), th
 
 - **Protected Drives list** (persisted per-user) — any drive letter added to this list cannot be targeted by Clean Disk or Convert to GPT.
 - **Automatic system drive protection** — on first run, the app scans logical drives, detects your system/boot drive(s), and offers to protect them.
-- **Manual protection** — use the Extras tab to protect all drive letters belonging to a specific disk, or manage the protected list directly (add/remove).
+- **Manual protection** — use the Info tab's Protect/Unprotect button (protects the whole disk) or the List Disks tab to protect all drive letters belonging to a specific disk, or manage the protected list directly (add/remove).
 - **Confirmation dialogs** — destructive operations show the target disk info and require an explicit Yes; Clean Disk requires a second "final warning" confirmation.
 
 Even with these safeguards, **always double-check which disk/drive is selected before confirming any destructive operation.** This tool modifies partition tables and boot configuration — misuse can make a drive unbootable or erase data.
