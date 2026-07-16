@@ -1566,5 +1566,10 @@ namespace Cloned_GPT_Drive___Boot_Fix
         {
             System.Diagnostics.Process.Start(DISKMGMT_PATH);
         }
+    
+        private void StatusBox_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            // TODO: handle the TextChanged event
+        }
     }
 }
