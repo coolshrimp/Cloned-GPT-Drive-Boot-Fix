@@ -57,9 +57,7 @@ Even with these safeguards, **always double-check which disk/drive is selected b
 - .NET Framework 4.7.2
 - Administrator privileges (required for `diskpart` and `bcdboot`)
 
-## Download
 
-Grab `ClonedGPTDrive-BootFix.exe` from the [Releases](../../releases) page — a single portable exe, no install and nothing to extract. It prompts for Administrator on launch. (Windows SmartScreen may warn because the exe is unsigned; choose "More info → Run anyway".)
 
 ## Building from Source
 
