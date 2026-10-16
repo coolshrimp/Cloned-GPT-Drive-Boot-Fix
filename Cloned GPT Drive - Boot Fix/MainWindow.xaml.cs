@@ -407,7 +407,7 @@ namespace Cloned_GPT_Drive___Boot_Fix
             {
                 PhysicalDisk disk = connectedDisks.FirstOrDefault(d => d.Key == entry.Key);
                 string display = disk != null
-                    ? $"Disk {disk.Number} — {DescribeDisk(disk)}  {FormatLetters(disk.Letters)}"
+                    ? FormatDiskLine(disk.Number, disk.Letters, FormatBytes((long)disk.SizeBytes), disk.Model)
                     : $"Not connected — {entry.Name}";
 
                 if (disk != null)
@@ -858,8 +858,9 @@ namespace Cloned_GPT_Drive___Boot_Fix
                 if (!string.IsNullOrEmpty(entry.Info)) tailParts.Add(entry.Info);
                 if (!string.IsNullOrEmpty(entry.Status) && entry.Status != "Healthy") tailParts.Add(entry.Status);
 
-                string friendlyText = string.Format("Vol {0,2} │ {1,-6} │ {2,-3}│ {3,-5} │ {4,8} │ {5}",
-                    entry.Number, diskDisplay, letterDisplay, fsDisplay, entry.Size, string.Join("  ", tailParts));
+                // Disk │ Vol │ Letter │ Size │ Format │ Title
+                string friendlyText = string.Format("{0,-6} │ Vol {1,2} │ {2,-3}│ {3,8} │ {4,-5} │ {5}",
+                    diskDisplay, entry.Number, letterDisplay, entry.Size, fsDisplay, string.Join("  ", tailParts));
 
                 var item = new ComboBoxItem
                 {
@@ -961,6 +962,35 @@ namespace Cloned_GPT_Drive___Boot_Fix
             disk.Key = DiskpartParser.BuildDiskKey(disk.Model, disk.SerialNumber, disk.SizeBytes, Convert.ToString(drive["PNPDeviceID"]));
             disk.Letters = letterToDisk.Where(l => l.Value == disk.Number).Select(l => l.Key).OrderBy(l => l).ToList();
             return disk;
+        }
+
+        /// <summary>
+        /// The one-line description used wherever a disk is listed:
+        /// "Disk 1 — M: O: S: (7.28 TB) — Media, Other, Software — Samsung SSD 870 QVO 8TB".
+        /// </summary>
+        private static string FormatDiskLine(int number, List<string> letters, string size, string model)
+        {
+            string letterText = letters.Count > 0 ? FormatLetters(letters) : "--";
+            var titles = letters.OrderBy(l => l).Select(GetVolumeLabel).Where(t => t.Length > 0).ToList();
+            string titleText = titles.Count > 0 ? string.Join(", ", titles) : "(no label)";
+            string modelText = string.IsNullOrEmpty(model) ? "unknown model" : model;
+            return $"Disk {number} — {letterText} ({size}) — {titleText} — {modelText}";
+        }
+
+        /// <summary>
+        /// The volume label of a drive letter, or "" if it has none or isn't ready.
+        /// </summary>
+        private static string GetVolumeLabel(string driveLetter)
+        {
+            try
+            {
+                var driveInfo = new DriveInfo(driveLetter);
+                return driveInfo.IsReady ? driveInfo.VolumeLabel : "";
+            }
+            catch
+            {
+                return "";
+            }
         }
 
         /// <summary>
@@ -2265,14 +2295,11 @@ namespace Cloned_GPT_Drive___Boot_Fix
                         .OrderBy(l => l)
                         .ToList();
 
-                    // Show enough to recognise the disk (size, model, letters) — a bare
+                    // Show enough to recognise the disk (letters, size, titles, model) — a bare
                     // "Disk 2" is far too easy to mix up with another disk
-                    var parts = new List<string> { $"Disk {entry.Number}", entry.Size };
                     string model = physical != null && physical.Model.Length > 0 ? physical.Model : detail.Model;
-                    if (!string.IsNullOrEmpty(model))
-                        parts.Add(model);
-                    if (letters.Count > 0)
-                        parts.Add(FormatLetters(letters));
+                    string size = physical != null && physical.SizeBytes > 0 ? FormatBytes((long)physical.SizeBytes) : entry.Size;
+                    var parts = new List<string> { FormatDiskLine(entry.Number, letters, size, model) };
                     if (!string.Equals(entry.Status, "Online", StringComparison.OrdinalIgnoreCase))
                         parts.Add("(" + entry.Status + ")");
                     if (!detail.IsComplete || physical == null)
