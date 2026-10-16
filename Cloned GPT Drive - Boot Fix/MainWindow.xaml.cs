@@ -292,8 +292,9 @@ namespace Cloned_GPT_Drive___Boot_Fix
 
             try
             {
-                // Network drives currently mapped in any logon session (including ones that
-                // aren't saved, e.g. 'net use /persistent:no' or logon scripts)
+                // Network drives mapped in this (elevated) session, including ones that aren't
+                // saved. Unsaved mappings made only in the user's normal session can't be seen
+                // from here; saved ones are covered by the registry check above
                 using (var searcher = new ManagementObjectSearcher("SELECT Name FROM Win32_MappedLogicalDisk"))
                 {
                     foreach (ManagementObject mapped in searcher.Get())
@@ -1077,6 +1078,7 @@ namespace Cloned_GPT_Drive___Boot_Fix
             if (check.Detail.IsInUseByWindows || check.Letters.Any(IsHostSystemLetter))
                 check.BlockReasons.Add($"Disk {diskNumber} holds the copy of Windows this PC is running from.");
 
+            RememberProtectedDiskId(check.Disk, check.Detail);
             string protectionMatch = FindProtectionMatch(check.Disk, check.Detail.DiskId);
             if (protectionMatch != null)
                 check.BlockReasons.Add(protectionMatch);
@@ -1372,8 +1374,13 @@ namespace Cloned_GPT_Drive___Boot_Fix
                     previous.ClearValue(BackgroundProperty);
             }
 
+            // No EFI volume pairs with this drive: clear the selection so a volume picked for a
+            // previous drive can't silently carry over to this one
             if (fat32Match == null)
+            {
+                Volumes_dd.SelectedIndex = -1;
                 return;
+            }
 
             foreach (var obj in Volumes_dd.Items)
             {
@@ -1472,8 +1479,19 @@ namespace Cloned_GPT_Drive___Boot_Fix
             if (sameSerial != null)
                 return $"Disk {disk.Number} has the same serial number and size as protected disk {sameSerial.Name} — it is that disk on another connection.";
 
-            // The Disk ID is deliberately not used here: a clone copies it, so it would tie the
-            // clone to its protected source. It is only used to pair a disk between checks.
+            // The Disk ID is normally not used here: a clone copies it, so it would tie the clone
+            // to its protected source. The exception is a disk with no serial number, whose key
+            // comes from its USB port and changes when it is plugged in elsewhere — then the
+            // Disk ID is the only thing that still recognises it.
+            if (disk.SerialNumber.Length == 0 && DiskpartParser.IsMeaningfulDiskId(diskId))
+            {
+                ProtectedDiskEntry sameDiskId = entries.FirstOrDefault(entry => entry.SerialNumber.Length == 0
+                    && entry.SizeBytes == disk.SizeBytes
+                    && string.Equals(entry.DiskId, diskId, StringComparison.OrdinalIgnoreCase));
+                if (sameDiskId != null)
+                    return $"Disk {disk.Number} has the same Disk ID and size as protected disk {sameDiskId.Name} (which has no serial number), so it is probably that disk on another USB port. If it isn't, remove {sameDiskId.Name} from the protected list first.";
+            }
+
             return null;
         }
 
@@ -1496,6 +1514,29 @@ namespace Cloned_GPT_Drive___Boot_Fix
             }.ToString());
             Properties.Settings.Default.Save();
             return true;
+        }
+
+        /// <summary>
+        /// Remembers the Disk ID of a protected disk the first time it is read, so a disk without
+        /// a serial number can still be recognised after it moves to another USB port.
+        /// </summary>
+        private void RememberProtectedDiskId(PhysicalDisk disk, DiskDetail detail)
+        {
+            if (disk == null || string.IsNullOrEmpty(disk.Key) || detail == null || !detail.IsComplete
+                || !DiskpartParser.IsMeaningfulDiskId(detail.DiskId) || Properties.Settings.Default.ProtectedDisks == null)
+                return;
+
+            foreach (string stored in Properties.Settings.Default.ProtectedDisks.Cast<string>().ToList())
+            {
+                ProtectedDiskEntry entry = ProtectedDiskEntry.Parse(stored);
+                if (entry.Key == disk.Key && entry.DiskId.Length == 0)
+                {
+                    int index = Properties.Settings.Default.ProtectedDisks.IndexOf(stored);
+                    entry.DiskId = detail.DiskId;
+                    Properties.Settings.Default.ProtectedDisks[index] = entry.ToString();
+                    Properties.Settings.Default.Save();
+                }
+            }
         }
 
         /// <summary>
@@ -1773,7 +1814,8 @@ namespace Cloned_GPT_Drive___Boot_Fix
             // the temporary letter would replace (and then remove) its letter for good
             if (!string.IsNullOrEmpty(selectedVolume.Letter))
             {
-                MessageBox.Show($"The selected volume already has drive letter {selectedVolume.Letter}:, so it is not an EFI partition.\n\nSelect the cloned drive's FAT32 EFI volume (it has no drive letter).",
+                MessageBox.Show($"The selected volume has drive letter {selectedVolume.Letter}:. A cloned drive's EFI partition normally has no letter, and Fix Boot would replace and then remove this one.\n\n" +
+                    $"If this IS the cloned drive's EFI partition and {selectedVolume.Letter}: is a leftover temporary letter, remove the letter in Disk Management, click 'Refresh' and try again. Otherwise select the cloned drive's FAT32 EFI volume.",
                     "Cannot Use This Volume", MessageBoxButton.OK, MessageBoxImage.Error);
                 return;
             }
@@ -2257,6 +2299,7 @@ namespace Cloned_GPT_Drive___Boot_Fix
                 {
                     PhysicalDisk physical = physicalDisks[entry.Number];
                     DiskDetail detail = details[entry.Number];
+                    RememberProtectedDiskId(physical, detail);
 
                     // Letters from both Windows and diskpart, paired with the disk number,
                     // hardware identity and Disk ID — all re-checked before Clean/Convert
