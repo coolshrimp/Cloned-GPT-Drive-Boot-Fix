@@ -30,6 +30,17 @@ jobs:
       - name: Build Release
         run: msbuild "Cloned GPT Drive - Boot Fix.sln" /p:Configuration=Release /p:Platform="Any CPU" /v:minimal
 
+      # Safety tests for the diskpart parsing that protection checks rely on. Pure string
+      # parsing of captured diskpart output — nothing runs diskpart or touches a disk
+      - name: Run diskpart parser tests
+        shell: pwsh
+        run: |
+          $csc = Join-Path (Split-Path (Get-Command msbuild).Source) 'Roslyn\csc.exe'
+          & $csc /nologo /out:ParserTests.exe "Cloned GPT Drive - Boot Fix/DiskpartParser.cs" "Tests/DiskpartParserTests.cs"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./ParserTests.exe
+          exit $LASTEXITCODE
+
       # Single-file release: the app has no DLL dependencies and runs fine without
       # the .exe.config (settings defaults are compiled in; Win10/11 ship .NET 4.8)
       - name: Stage single-file release asset
