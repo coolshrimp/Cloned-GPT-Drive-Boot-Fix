@@ -104,9 +104,11 @@ namespace Cloned_GPT_Drive___Boot_Fix
             // Check for first run
             if (Properties.Settings.Default.IsFirstRun)
             {
-                ShowFirstRunDialog();
-                Properties.Settings.Default.IsFirstRun = false;
-                Properties.Settings.Default.Save();
+                if (ShowFirstRunDialog())
+                {
+                    Properties.Settings.Default.IsFirstRun = false;
+                    Properties.Settings.Default.Save();
+                }
             }
             else if (Properties.Settings.Default.ProtectedDisks == null)
             {
@@ -205,7 +207,7 @@ namespace Cloned_GPT_Drive___Boot_Fix
                 // Local disks only: network drives are never offered (their letters are
                 // simply in use, so they also never show up as free temporary letters)
                 DriveInfo driveInfo = new DriveInfo(drive);
-                if (driveInfo.IsReady && IsLocalDrive(driveInfo))
+                if (IsLocalDrive(driveInfo) && driveInfo.IsReady)
                 {
                     // Markers go at the END, tight after the name/label; the 🪟 emoji
                     // is too new for the default font and rendered as a square
@@ -241,15 +243,54 @@ namespace Cloned_GPT_Drive___Boot_Fix
                 driveLetters.Add(Convert.ToChar(i)); // Add uppercase letters to possible drive letters
             }
 
-            foreach (string drive in Directory.GetLogicalDrives())
+            foreach (char usedLetter in GetLettersInUse())
             {
-                driveLetters.Remove(drive[0]); // removed used drive letters from possible drive letters
+                driveLetters.Remove(usedLetter); // removed used drive letters (incl. mapped network drives) from possible drive letters
             }
 
             foreach (char drive in driveLetters)
             {
                 UnusedDriveSelection_ddbox.Items.Add(drive + ":\\"); // add unused drive letters to the combo box
             }
+        }
+
+        /// <summary>
+        /// Every drive letter that is taken, so it is never offered as a temporary letter. This
+        /// app runs elevated, and an elevated process doesn't see network drives mapped in the
+        /// user's normal session, so the users' saved network mappings are read from the registry too.
+        /// </summary>
+        private static HashSet<char> GetLettersInUse()
+        {
+            var used = new HashSet<char>();
+
+            foreach (string drive in Directory.GetLogicalDrives())
+                used.Add(char.ToUpper(drive[0]));
+
+            try
+            {
+                // HKEY_USERS\<user>\Network\<letter> — saved mapped drives of every loaded user profile
+                foreach (string userKey in Microsoft.Win32.Registry.Users.GetSubKeyNames())
+                {
+                    try
+                    {
+                        using (var network = Microsoft.Win32.Registry.Users.OpenSubKey(userKey + @"\Network"))
+                        {
+                            if (network == null)
+                                continue;
+
+                            foreach (string letter in network.GetSubKeyNames())
+                            {
+                                if (letter.Length == 1 && char.IsLetter(letter[0]))
+                                    used.Add(char.ToUpper(letter[0]));
+                            }
+                        }
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+
+            return used;
         }
 
         /// <summary>
@@ -447,7 +488,8 @@ namespace Cloned_GPT_Drive___Boot_Fix
             {
                 // Rescan all connected, ready drives and protect every one of them (and their whole
                 // disks) so nothing can be cleaned/formatted without the user explicitly unprotecting it first.
-                List<string> newlyProtected = ProtectAllConnectedDrives();
+                var failures = new List<string>();
+                List<string> newlyProtected = ProtectAllConnectedDrives(failures);
 
                 RefreshProtectedDrivesList();
                 RefreshDriveDropdowns();
@@ -458,15 +500,20 @@ namespace Cloned_GPT_Drive___Boot_Fix
                     UpdateProtectButtonState(driveLetter);
                 }
 
+                string failureText = failures.Count > 0
+                    ? "\n\nWARNING — not everything could be protected:\n\n" + string.Join("\n", failures.Select(f => "  • " + f))
+                    : "";
+                MessageBoxImage icon = failures.Count > 0 ? MessageBoxImage.Warning : MessageBoxImage.Information;
+
                 if (newlyProtected.Count > 0)
                 {
-                    MessageBox.Show($"Rescan complete. Newly protected:\n\n" + string.Join("\n", newlyProtected.Select(l => "  • " + l)),
-                        "Rescan Complete", MessageBoxButton.OK, MessageBoxImage.Information);
+                    MessageBox.Show($"Rescan complete. Newly protected:\n\n" + string.Join("\n", newlyProtected.Select(l => "  • " + l)) + failureText,
+                        "Rescan Complete", MessageBoxButton.OK, icon);
                 }
                 else
                 {
-                    MessageBox.Show("Rescan complete. All connected drives are already protected.",
-                        "Rescan Complete", MessageBoxButton.OK, MessageBoxImage.Information);
+                    MessageBox.Show("Rescan complete. All connected drives are already protected." + failureText,
+                        "Rescan Complete", MessageBoxButton.OK, icon);
                 }
             }
             catch (Exception ex)
@@ -570,6 +617,97 @@ namespace Cloned_GPT_Drive___Boot_Fix
             p.WaitForExit();
 
             return output;
+        }
+
+        /// <summary>
+        /// Runs a destructive diskpart command only after re-checking the target in the SAME
+        /// diskpart session. The first commands select and describe the target; once diskpart has
+        /// answered them, their output is passed to verify, and the destructive commands are sent
+        /// only if verify returns true. Because the selection is never released in between, a disk
+        /// or volume that was unplugged and renumbered can't be swapped in after the check.
+        /// </summary>
+        private string ExecuteVerifiedDiskpartCommand(string[] selectAndDescribe, Func<string, bool> verify, string[] destructiveCommands, out bool destructiveSent)
+        {
+            destructiveSent = false;
+            var output = new StringBuilder();
+            var outputLock = new object();
+
+            using (Process p = new Process())
+            {
+                p.StartInfo.UseShellExecute = false;
+                p.StartInfo.RedirectStandardOutput = true;
+                p.StartInfo.WindowStyle = ProcessWindowStyle.Hidden;
+                p.StartInfo.CreateNoWindow = true;
+                p.StartInfo.FileName = DISKPART_PATH;
+                p.StartInfo.RedirectStandardInput = true;
+                p.Start();
+
+                // diskpart's prompt has no newline after it, so read character by character
+                var reader = new System.Threading.Thread(() =>
+                {
+                    int c;
+                    while ((c = p.StandardOutput.Read()) >= 0)
+                    {
+                        lock (outputLock) output.Append((char)c);
+                    }
+                }) { IsBackground = true };
+                reader.Start();
+
+                foreach (string command in selectAndDescribe)
+                {
+                    p.StandardInput.WriteLine(command);
+                }
+                p.StandardInput.Flush();
+
+                // diskpart shows a "DISKPART>" prompt at start and after each command, so one more
+                // prompt than commands sent means every answer has arrived
+                string description = null;
+                DateTime deadline = DateTime.Now.AddSeconds(60);
+                while (DateTime.Now < deadline && !p.HasExited)
+                {
+                    string soFar;
+                    lock (outputLock) soFar = output.ToString();
+                    if (Regex.Matches(soFar, "DISKPART>").Count >= selectAndDescribe.Length + 1)
+                    {
+                        description = soFar;
+                        break;
+                    }
+                    System.Threading.Thread.Sleep(50);
+                }
+
+                if (description != null && verify(description))
+                {
+                    foreach (string command in destructiveCommands)
+                    {
+                        p.StandardInput.WriteLine(command);
+                    }
+                    destructiveSent = true;
+                }
+
+                p.StandardInput.WriteLine("exit");
+                p.StandardInput.Flush();
+                p.StandardInput.Close();
+                p.WaitForExit();
+                reader.Join();
+            }
+
+            lock (outputLock) return output.ToString();
+        }
+
+        /// <summary>
+        /// Removes a temporary drive letter, selecting the volume BY that letter so only the volume
+        /// that actually has it is touched. Returns true once the letter is gone.
+        /// </summary>
+        private bool RemoveTemporaryLetter(string letter)
+        {
+            try
+            {
+                string output = ExecuteDiskpartCommand($"select volume {letter}", $"remove letter {letter}");
+                CMDOutputBox.AppendText(DeleteLines(output, 11));
+            }
+            catch { }
+
+            return !Directory.GetLogicalDrives().Any(d => char.ToUpper(d[0]) == char.ToUpper(letter[0]));
         }
 
         /// <summary>
@@ -736,7 +874,9 @@ namespace Cloned_GPT_Drive___Boot_Fix
                 {
                     foreach (ManagementObject drive in searcher.Get())
                     {
-                        disks.Add(BuildPhysicalDisk(drive));
+                        // One unreadable disk (e.g. being unplugged) mustn't hide the others
+                        try { disks.Add(BuildPhysicalDisk(drive)); }
+                        catch { }
                     }
                 }
             }
@@ -791,6 +931,20 @@ namespace Cloned_GPT_Drive___Boot_Fix
             if (string.IsNullOrEmpty(diskDeviceId))
                 return result;
 
+            try
+            {
+                AddDriveLettersOnDrive(diskDeviceId, result);
+            }
+            catch
+            {
+                // Partial result; Clean/Convert compare it with diskpart's list and refuse on a mismatch
+            }
+
+            return result;
+        }
+
+        private static void AddDriveLettersOnDrive(string diskDeviceId, List<string> result)
+        {
             string escapedDiskId = diskDeviceId.Replace(@"\", @"\\");
             string allPartitionsQuery = $"ASSOCIATORS OF {{Win32_DiskDrive.DeviceID='{escapedDiskId}'}} WHERE AssocClass=Win32_DiskDriveToDiskPartition";
             using (var allPartitionsSearcher = new ManagementObjectSearcher(allPartitionsQuery))
@@ -809,8 +963,6 @@ namespace Cloned_GPT_Drive___Boot_Fix
                     }
                 }
             }
-
-            return result;
         }
 
         /// <summary>
@@ -846,19 +998,38 @@ namespace Cloned_GPT_Drive___Boot_Fix
             if (check.Disk == null || string.IsNullOrEmpty(check.Disk.Key))
                 check.BlockReasons.Add($"Windows could not identify Disk {diskNumber}. It may have been unplugged or renumbered — click 'List Disks' again.");
 
-            if (!check.Detail.IsComplete)
-                check.BlockReasons.Add($"diskpart did not return complete details for Disk {diskNumber}, so its protection cannot be verified.");
+            // Two connected disks with the same identity (some docks report one serial for every
+            // bay) can't be told apart, so neither can be safely targeted
+            if (check.Disk != null && !string.IsNullOrEmpty(check.Disk.Key)
+                && GetAllPhysicalDisks().Count(d => d.Key == check.Disk.Key) > 1)
+                check.BlockReasons.Add($"Another connected disk reports exactly the same model, serial number and size as Disk {diskNumber}, so they can't be told apart. Disconnect the other disk first.");
 
-            // Windows and diskpart must agree on which letters this disk number has; if they
-            // don't, the two are not looking at the same disk and the number can't be trusted
-            if (check.Disk != null && check.Detail.IsComplete && !SameLetters(check.Disk.Letters, check.Detail.Letters))
-                check.BlockReasons.Add($"Windows lists drive letters [{FormatLetters(check.Disk.Letters)}] on Disk {diskNumber}, but diskpart lists [{FormatLetters(check.Detail.Letters)}]. They do not agree on which disk this is.");
+            if (!check.Detail.IsComplete)
+                check.BlockReasons.Add($"diskpart did not return complete details for Disk {diskNumber}, so its protection cannot be verified."
+                    + (check.Detail.Selected ? "" : " (This tool reads diskpart's English output — on other Windows display languages Clean and Convert are not available.)"));
+
+            // Windows and diskpart must agree on which disk this number is: every letter Windows
+            // puts on it must be on diskpart's list too, and no letter diskpart lists may belong to
+            // another disk. (Windows can't map some letters, e.g. on dynamic disks — that's fine.)
+            if (check.Disk != null && check.Detail.IsComplete)
+            {
+                bool windowsLetterMissing = check.Disk.Letters.Any(l => !check.Detail.Letters.Contains(l, StringComparer.OrdinalIgnoreCase));
+                bool letterOnOtherDisk = check.Detail.Letters.Any(l =>
+                {
+                    int? otherDisk = GetDiskNumberForLetter(l.Substring(0, 1));
+                    return otherDisk.HasValue && otherDisk.Value != diskNumber;
+                });
+
+                if (windowsLetterMissing || letterOnOtherDisk)
+                    check.BlockReasons.Add($"Windows lists drive letters [{FormatLetters(check.Disk.Letters)}] on Disk {diskNumber}, but diskpart lists [{FormatLetters(check.Detail.Letters)}]. They do not agree on which disk this is.");
+            }
 
             if (check.Detail.IsInUseByWindows || check.Letters.Any(IsHostSystemLetter))
                 check.BlockReasons.Add($"Disk {diskNumber} holds the copy of Windows this PC is running from.");
 
-            if (check.Disk != null && IsDiskProtected(check.Disk.Key))
-                check.BlockReasons.Add($"Disk {diskNumber} ({DescribeDisk(check.Disk)}) is on the protected list.");
+            string protectionMatch = FindProtectionMatch(check.Disk, check.Detail.DiskId);
+            if (protectionMatch != null)
+                check.BlockReasons.Add(protectionMatch);
 
             List<string> protectedLetters = check.Letters.Where(IsLetterInProtectedList).ToList();
             if (protectedLetters.Count > 0)
@@ -973,8 +1144,9 @@ namespace Cloned_GPT_Drive___Boot_Fix
         /// <summary>
         /// Repeats the safety check immediately before running the operation, after the user has
         /// clicked through the confirmations, and makes sure it is still the very same disk.
+        /// Returns the fresh check, or null if the operation must not run.
         /// </summary>
-        private bool RecheckDiskJustBeforeRunning(DiskChoice choice, DiskSafetyCheck confirmed, string operationName)
+        private DiskSafetyCheck RecheckDiskJustBeforeRunning(DiskChoice choice, DiskSafetyCheck confirmed, string operationName)
         {
             var confirmedChoice = new DiskChoice
             {
@@ -983,7 +1155,7 @@ namespace Cloned_GPT_Drive___Boot_Fix
                 DiskId = confirmed.Detail.DiskId,
                 Letters = confirmed.Letters
             };
-            return CheckDiskBeforeDestructiveOperation(confirmedChoice, operationName) != null;
+            return CheckDiskBeforeDestructiveOperation(confirmedChoice, operationName);
         }
 
         /// <summary>
@@ -1035,10 +1207,23 @@ namespace Cloned_GPT_Drive___Boot_Fix
 
             int? currentWindowsDisk = GetDiskNumberForLetter(windowsLetter);
             if (!windowsDisk.HasValue || currentWindowsDisk != windowsDisk)
+            {
                 problems.Add($"Drive {windowsLetter}: could not be matched to the disk it was on at 'Refresh'.");
+            }
+            else
+            {
+                // The Windows disk gets the same pairing as the EFI disk: same hardware, same letters
+                PhysicalDisk windowsPhysical = GetPhysicalDisk(windowsDisk.Value);
+                _physicalDisks.TryGetValue(windowsDisk.Value, out PhysicalDisk listedWindowsDisk);
+                if (windowsPhysical == null || listedWindowsDisk == null || string.IsNullOrEmpty(windowsPhysical.Key)
+                    || windowsPhysical.Key != listedWindowsDisk.Key
+                    || !windowsPhysical.Letters.Contains(windowsLetter + ":\\")
+                    || !SameLetters(windowsPhysical.Letters, listedWindowsDisk.Letters))
+                    problems.Add($"Disk {windowsDisk} (holding {windowsLetter}:) is not the same disk it was at 'Refresh'.");
+            }
 
-            // And the temporary letter must still be free
-            if (Directory.GetLogicalDrives().Any(d => char.ToUpper(d[0]) == char.ToUpper(tempLetter[0])))
+            // And the temporary letter must still be free (including mapped network drives)
+            if (GetLettersInUse().Contains(char.ToUpper(tempLetter[0])))
                 problems.Add($"The temporary letter {tempLetter}: is already in use.");
 
             return problems;
@@ -1149,7 +1334,7 @@ namespace Cloned_GPT_Drive___Boot_Fix
                 return true;
 
             PhysicalDisk disk = GetPhysicalDiskForLetter(driveLetter);
-            return disk != null && IsDiskProtected(disk.Key);
+            return IsDiskProtected(disk);
         }
 
         /// <summary>
@@ -1195,6 +1380,44 @@ namespace Cloned_GPT_Drive___Boot_Fix
         }
 
         /// <summary>
+        /// Checks if a physical disk is protected, also recognising a protected disk whose model
+        /// name changed because it moved to another connection (e.g. from a USB dock to SATA):
+        /// the same serial number and size still count as the same disk.
+        /// </summary>
+        private bool IsDiskProtected(PhysicalDisk disk)
+        {
+            return disk != null && FindProtectionMatch(disk, null) != null;
+        }
+
+        /// <summary>
+        /// Returns why a disk counts as protected, or null if it doesn't. Matches, in order: the
+        /// exact hardware key; the same serial number and size; and (when known) the same Disk ID
+        /// as a protected disk, which means it is that disk on another connection or a clone of it.
+        /// </summary>
+        private string FindProtectionMatch(PhysicalDisk disk, string diskId)
+        {
+            if (disk == null || string.IsNullOrEmpty(disk.Key))
+                return null;
+
+            List<ProtectedDiskEntry> entries = GetProtectedDisks();
+
+            if (entries.Any(entry => entry.Key == disk.Key))
+                return $"Disk {disk.Number} ({DescribeDisk(disk)}) is on the protected list.";
+
+            ProtectedDiskEntry sameSerial = entries.FirstOrDefault(entry =>
+                disk.SerialNumber.Length > 0 && entry.SerialNumber == disk.SerialNumber && entry.SizeBytes == disk.SizeBytes);
+            if (sameSerial != null)
+                return $"Disk {disk.Number} has the same serial number and size as protected disk {sameSerial.Name} — it is that disk on another connection.";
+
+            ProtectedDiskEntry sameDiskId = entries.FirstOrDefault(entry => DiskpartParser.IsMeaningfulDiskId(diskId)
+                && string.Equals(entry.DiskId, diskId, StringComparison.OrdinalIgnoreCase));
+            if (sameDiskId != null)
+                return $"Disk {disk.Number} has the same Disk ID ({diskId}) as protected disk {sameDiskId.Name}, so it is that disk or a clone of it. If you are sure, remove {sameDiskId.Name} from the protected list first.";
+
+            return null;
+        }
+
+        /// <summary>
         /// Adds a physical disk to the protected list. Returns true if it was newly added.
         /// </summary>
         private bool AddProtectedDisk(PhysicalDisk disk, string diskId = "")
@@ -1232,48 +1455,62 @@ namespace Cloned_GPT_Drive___Boot_Fix
         }
 
         /// <summary>
-        /// Protects every connected, ready drive — and the whole physical disk each one is on —
-        /// so nothing can be cleaned or formatted until the user explicitly unprotects it.
-        /// Used on first run and by 'Rescan &amp; Protect Drives'. Returns a line describing each
-        /// newly protected disk or drive.
+        /// Protects every connected local disk — every physical disk Windows sees, including disks
+        /// with no drive letter, offline, RAW or BitLocker-locked ones — together with all of its
+        /// drive letters, so nothing can be cleaned or formatted until the user explicitly
+        /// unprotects it. Used on first run and by 'Rescan &amp; Protect Drives'.
+        /// Returns a line for each newly protected disk; anything that could not be protected
+        /// (no disks found, or a disk that can't be identified) is added to failures.
         /// </summary>
-        private List<string> ProtectAllConnectedDrives()
+        private const string NoDisksFoundMessage = "Windows did not report any disks, so nothing could be protected. Run 'Rescan & Protect Drives' again.";
+
+        private List<string> ProtectAllConnectedDrives(List<string> failures)
         {
             var newlyProtected = new List<string>();
 
             if (Properties.Settings.Default.ProtectedDrives == null)
                 Properties.Settings.Default.ProtectedDrives = new System.Collections.Specialized.StringCollection();
 
-            var disksDone = new HashSet<int>();
+            List<PhysicalDisk> disks = GetAllPhysicalDisks();
+            if (disks.Count == 0)
+                failures.Add(NoDisksFoundMessage);
 
+            // Each disk's Disk ID is stored with it as a second way to recognise it later
+            Dictionary<int, DiskDetail> details;
+            try { details = ReadAllDiskDetails().Item3; }
+            catch { details = new Dictionary<int, DiskDetail>(); }
+
+            foreach (PhysicalDisk disk in disks)
+            {
+                var addedLetters = disk.Letters.Where(l => !Properties.Settings.Default.ProtectedDrives.Contains(l)).ToList();
+                foreach (string letter in addedLetters)
+                    Properties.Settings.Default.ProtectedDrives.Add(letter);
+
+                if (string.IsNullOrEmpty(disk.Key))
+                {
+                    failures.Add($"Disk {disk.Number} — {DescribeDisk(disk)} could not be identified. It is still refused by Clean/Convert, but can't be listed as protected.");
+                    continue;
+                }
+
+                string diskId = details.TryGetValue(disk.Number, out DiskDetail detail) && detail.IsComplete ? detail.DiskId : "";
+                if (AddProtectedDisk(disk, diskId) || addedLetters.Count > 0)
+                    newlyProtected.Add($"Disk {disk.Number} — {DescribeDisk(disk)}  [{FormatLetters(disk.Letters)}]");
+            }
+
+            // Local letters that Windows could not place on any disk are protected by letter
+            var lettersOnDisks = new HashSet<string>(disks.SelectMany(d => d.Letters), StringComparer.OrdinalIgnoreCase);
             foreach (var drive in Environment.GetLogicalDrives())
             {
                 try
                 {
                     DriveInfo driveInfo = new DriveInfo(drive);
-                    if (!driveInfo.IsReady || !IsLocalDrive(driveInfo))
+                    if (!IsLocalDrive(driveInfo) || lettersOnDisks.Contains(drive.ToUpper()))
                         continue;
 
-                    PhysicalDisk disk = GetPhysicalDiskForLetter(drive);
-
-                    if (disk != null)
+                    if (!Properties.Settings.Default.ProtectedDrives.Contains(drive.ToUpper()))
                     {
-                        if (!disksDone.Add(disk.Number))
-                            continue;
-
-                        // Protect every drive letter on the same physical disk, and the disk itself
-                        var addedLetters = disk.Letters.Count > 0 ? disk.Letters : new List<string> { drive };
-                        var added = addedLetters.Where(l => !Properties.Settings.Default.ProtectedDrives.Contains(l)).ToList();
-                        foreach (string letter in added)
-                            Properties.Settings.Default.ProtectedDrives.Add(letter);
-
-                        if (AddProtectedDisk(disk) || added.Count > 0)
-                            newlyProtected.Add($"Disk {disk.Number} — {DescribeDisk(disk)}  [{FormatLetters(disk.Letters)}]");
-                    }
-                    else if (!Properties.Settings.Default.ProtectedDrives.Contains(drive))
-                    {
-                        Properties.Settings.Default.ProtectedDrives.Add(drive);
-                        newlyProtected.Add(drive);
+                        Properties.Settings.Default.ProtectedDrives.Add(drive.ToUpper());
+                        newlyProtected.Add(drive.ToUpper());
                     }
                 }
                 catch { }
@@ -1281,6 +1518,41 @@ namespace Cloned_GPT_Drive___Boot_Fix
 
             Properties.Settings.Default.Save();
             return newlyProtected;
+        }
+
+        /// <summary>
+        /// After this tool has cleaned or converted a disk, its Disk ID and letters change. Update
+        /// the remembered pairing for that disk so the next step (e.g. Convert after Clean) checks
+        /// against the disk as it is now — but only if it is still the same hardware.
+        /// </summary>
+        private void UpdateDiskChoiceAfterChange(DiskChoice choice, string expectedKey)
+        {
+            try
+            {
+                DiskSafetyCheck current = InspectDisk(choice.Number);
+
+                if (Disk_list_dd.SelectedItem is ComboBoxItem item && item.Tag == choice)
+                {
+                    if (current.Disk != null && current.Disk.Key == expectedKey && current.Detail.IsComplete)
+                    {
+                        item.Tag = new DiskChoice
+                        {
+                            Number = choice.Number,
+                            Key = expectedKey,
+                            DiskId = current.Detail.DiskId,
+                            Letters = current.Letters
+                        };
+                    }
+                    else
+                    {
+                        Disk_list_dd.Items.Clear();
+                    }
+                }
+            }
+            catch
+            {
+                Disk_list_dd.Items.Clear();
+            }
         }
 
         /// <summary>
@@ -1311,12 +1583,14 @@ namespace Cloned_GPT_Drive___Boot_Fix
         /// <summary>
         /// First run: protects every connected drive and its whole physical disk (the same as
         /// 'Rescan &amp; Protect Drives'), THEN tells the user exactly what was protected.
+        /// Returns false if no disks could be found, so first run is tried again next launch.
         /// </summary>
-        private void ShowFirstRunDialog()
+        private bool ShowFirstRunDialog()
         {
             // Protect first, so the dialog only ever reports what really happened
             ProtectDisksOfProtectedLetters();
-            List<string> newlyProtected = ProtectAllConnectedDrives();
+            var failures = new List<string>();
+            List<string> newlyProtected = ProtectAllConnectedDrives(failures);
 
             StringBuilder message = new StringBuilder();
             message.AppendLine("Welcome to Cloned GPT Drive - Boot Fix!");
@@ -1331,12 +1605,25 @@ namespace Cloned_GPT_Drive___Boot_Fix
             {
                 message.AppendLine("  (no drives were found)");
             }
+            if (failures.Count > 0)
+            {
+                message.AppendLine();
+                message.AppendLine("WARNING — not everything could be protected:");
+                foreach (string failure in failures)
+                {
+                    message.AppendLine($"  • {failure}");
+                }
+            }
             message.AppendLine();
             message.AppendLine("Protected disks cannot be cleaned or converted through this tool.");
             message.AppendLine("Drives connected later are not protected until you click 'Rescan & Protect Drives'.");
             message.AppendLine("To work on a disk, unprotect it on the main screen or in the Extras tab.");
 
-            MessageBox.Show(message.ToString(), "First Run - Drive Protection", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBox.Show(message.ToString(), "First Run - Drive Protection", MessageBoxButton.OK,
+                failures.Count > 0 ? MessageBoxImage.Warning : MessageBoxImage.Information);
+
+            // Try again next launch if Windows didn't report any disks at all
+            return !failures.Contains(NoDisksFoundMessage);
         }
 
         /// <summary>
@@ -1414,6 +1701,19 @@ namespace Cloned_GPT_Drive___Boot_Fix
                 return;
             }
 
+            // Never rewrite the boot files of the PC that is running this tool: its EFI partition
+            // is marked System/Boot, and the disk it is on is in use by Windows
+            _diskDetails.TryGetValue(selectedVolume.DiskNumber.Value, out DiskDetail efiDiskDetail);
+            if (Regex.IsMatch(selectedVolume.Info, @"\b(System|Boot)\b", RegexOptions.IgnoreCase)
+                || efiDiskDetail == null || efiDiskDetail.IsInUseByWindows)
+            {
+                MessageBox.Show(efiDiskDetail == null
+                        ? "The details of the disk the selected volume is on could not be read, so it cannot be verified.\n\nClick 'Refresh' and try again."
+                        : "The selected volume is on the disk your CURRENT PC boots and runs Windows from (it is marked System/Boot).\n\nFix Boot only repairs the EFI partition of a cloned drive. Select the FAT32 volume on the cloned drive instead.",
+                    "Cannot Use This Volume", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+
             string windowsLetter = ExtractDriveLetter(DriveSelection_ddbox.SelectedItem.ToString()).ToUpper();
             VolumeEntry windowsVolume = _parsedVolumes.FirstOrDefault(v => v.Letter == windowsLetter);
             int? windowsDisk = windowsVolume != null && windowsVolume.DiskNumber.HasValue
@@ -1426,8 +1726,8 @@ namespace Cloned_GPT_Drive___Boot_Fix
                 if (selectedVolume.FileSystem != "FAT32")
                     warnings.Add($"• The selected volume is {(string.IsNullOrEmpty(selectedVolume.FileSystem) ? "not FAT32" : selectedVolume.FileSystem)} — the EFI partition is normally FAT32.");
 
-                if (selectedVolume.Info.IndexOf("System", StringComparison.OrdinalIgnoreCase) >= 0)
-                    warnings.Add("• The selected volume is marked 'System' — this looks like the EFI partition your CURRENT PC boots from, not the cloned drive's.");
+                if (!string.IsNullOrEmpty(selectedVolume.Letter))
+                    warnings.Add($"• The selected volume already has drive letter {selectedVolume.Letter}: — an EFI partition normally has no letter, so this may be a data partition.");
 
                 if (windowsDisk.HasValue && selectedVolume.DiskNumber != windowsDisk)
                     warnings.Add($"• The selected volume is on Disk {selectedVolume.DiskNumber}, but drive {windowsLetter}: is on Disk {windowsDisk} — a cloned drive's EFI partition is normally on the same disk.");
@@ -1465,6 +1765,8 @@ namespace Cloned_GPT_Drive___Boot_Fix
             if (MessageBox.Show(confirmMessage, "Confirm Fix Boot", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
                 return;
 
+            bool letterAssigned = false;
+
             try
             {
                 // Jump to the Simple tab so the user sees live progress
@@ -1489,16 +1791,30 @@ namespace Cloned_GPT_Drive___Boot_Fix
                     return;
                 }
 
-                // Step 1: Assign a temporary drive letter to the FAT32 EFI volume
-                string output = ExecuteDiskpartCommand(
-                    $"select {volumeSelector}",
-                    $"assign letter {letterToAssign}"
-                );
+                // Step 1: Assign a temporary drive letter to the FAT32 EFI volume. The volume is
+                // described and checked in the SAME diskpart session that assigns the letter, so
+                // it can't change between the check and the assign
+                string output = ExecuteVerifiedDiskpartCommand(
+                    new[] { $"select {volumeSelector}", "detail volume" },
+                    description => DiskpartParser.IsVolumeSelected(description, selectedVolume.Number)
+                        && DiskpartParser.ParseDiskList(description).Select(d => d.Number).SequenceEqual(new[] { efiDisk }),
+                    new[] { $"assign letter {letterToAssign}" },
+                    out bool assignSent);
 
                 CMDOutputBox.AppendText(DeleteLines(output, 11));
 
+                if (!assignSent)
+                {
+                    StatusBox.AppendText($"\r\n\r\nStopped — {volumeSelector} is no longer on Disk {efiDisk}. Nothing was changed.");
+                    SetProgress("Stopped: selection could not be verified.", 0);
+                    MessageBox.Show($"diskpart no longer shows {volumeSelector} on Disk {efiDisk}, so no letter was assigned and nothing was changed.\n\nClick 'Refresh' and try again.",
+                        "Selection Changed", MessageBoxButton.OK, MessageBoxImage.Error);
+                    return;
+                }
+
                 if (output.Contains("successfully assigned the drive letter"))
                 {
+                    letterAssigned = true;
                     StatusBox.AppendText("\r\n\r\nDrive Letter Assigned Successfully");
                     SetProgress("Drive letter assigned. Rebuilding boot files...", 35);
 
@@ -1506,8 +1822,6 @@ namespace Cloned_GPT_Drive___Boot_Fix
                     // letter really landed on the selected volume's disk before writing anything
                     if (!WaitForLetterOnDisk(letterToAssign, efiDisk))
                     {
-                        string undo = ExecuteDiskpartCommand($"select {volumeSelector}", $"remove letter {letterToAssign}");
-                        CMDOutputBox.AppendText(DeleteLines(undo, 11));
                         StatusBox.AppendText($"\r\n\r\nStopped — {letterToAssign}: is not on Disk {efiDisk}. No boot files were written.");
                         SetProgress("Stopped: temporary letter is not on the expected disk.", 0);
                         MessageBox.Show($"The temporary letter {letterToAssign}: did not end up on Disk {efiDisk}, so no boot files were written.\n\nClick 'Refresh' and try again.",
@@ -1527,28 +1841,31 @@ namespace Cloned_GPT_Drive___Boot_Fix
                 // Step 2: Rebuild boot files onto the EFI partition
                 StatusBox.AppendText("\r\n\r\nFixing Boot Files...");
 
-                Process p1 = new Process();
-                p1.StartInfo.UseShellExecute = false;
-                p1.StartInfo.RedirectStandardOutput = true;
-                p1.StartInfo.WindowStyle = ProcessWindowStyle.Hidden;
-                p1.StartInfo.CreateNoWindow = true;
-                p1.StartInfo.FileName = CMD_PATH;
-                p1.StartInfo.RedirectStandardInput = true;
-                p1.StartInfo.Verb = "runas";
-                p1.Start();
-
-                string windowsDrive = ExtractDriveLetter(DriveSelection_ddbox.SelectedItem.ToString()) + @":\";
+                string windowsDrive = windowsLetter + @":\";
                 string bootDrive = letterToAssign.ToLower() + ":";
                 string bcdbootCmd = $"bcdboot {windowsDrive}Windows /s {bootDrive} /f UEFI";
+                string output1;
 
-                p1.StandardInput.WriteLine("cd C:\\Windows\\system32\\");
-                p1.StandardInput.WriteLine(bcdbootCmd);
-                p1.StandardInput.WriteLine("exit");
-                p1.StandardInput.Flush();
-                p1.StandardInput.Close();
+                using (Process p1 = new Process())
+                {
+                    p1.StartInfo.UseShellExecute = false;
+                    p1.StartInfo.RedirectStandardOutput = true;
+                    p1.StartInfo.WindowStyle = ProcessWindowStyle.Hidden;
+                    p1.StartInfo.CreateNoWindow = true;
+                    p1.StartInfo.FileName = CMD_PATH;
+                    p1.StartInfo.RedirectStandardInput = true;
+                    p1.StartInfo.Verb = "runas";
+                    p1.Start();
 
-                string output1 = p1.StandardOutput.ReadToEnd();
-                p1.WaitForExit();
+                    p1.StandardInput.WriteLine("cd C:\\Windows\\system32\\");
+                    p1.StandardInput.WriteLine(bcdbootCmd);
+                    p1.StandardInput.WriteLine("exit");
+                    p1.StandardInput.Flush();
+                    p1.StandardInput.Close();
+
+                    output1 = p1.StandardOutput.ReadToEnd();
+                    p1.WaitForExit();
+                }
 
                 CMDOutputBox.AppendText(DeleteLines(output1, 11));
 
@@ -1568,15 +1885,9 @@ namespace Cloned_GPT_Drive___Boot_Fix
 
                 // Step 3: Remove the temporary drive letter again
                 StatusBox.AppendText("\r\n\r\nRemoving Temporary Drive Letter...");
+                letterAssigned = false;
 
-                string output2 = ExecuteDiskpartCommand(
-                    $"select {volumeSelector}",
-                    $"remove letter {letterToAssign}"
-                );
-
-                CMDOutputBox.AppendText(DeleteLines(output2, 11));
-
-                if (output2.Contains("successfully removed the drive letter"))
+                if (RemoveTemporaryLetter(letterToAssign))
                 {
                     StatusBox.AppendText("\r\n\r\nDrive Letter Removed Successfully");
                     StatusBox.AppendText("\r\n\r\n===== BOOT REPAIR COMPLETE =====");
@@ -1588,7 +1899,7 @@ namespace Cloned_GPT_Drive___Boot_Fix
                 {
                     StatusBox.AppendText("\r\n\r\nFailed to remove drive letter (not critical)");
                     SetProgress("Boot repaired, but temporary letter removal failed.", 90);
-                    MessageBox.Show("Boot files were repaired, but the temporary drive letter could not be removed.\n\nYou may need to remove it manually using Disk Management.",
+                    MessageBox.Show($"Boot files were repaired, but the temporary drive letter {letterToAssign}: could not be removed.\n\nYou may need to remove it manually using Disk Management.",
                         "Partial Success", MessageBoxButton.OK, MessageBoxImage.Warning);
                 }
             }
@@ -1598,6 +1909,17 @@ namespace Cloned_GPT_Drive___Boot_Fix
                 SetProgress("Error during boot repair.", 0);
                 MessageBox.Show($"An error occurred during boot repair:\n\n{ex.Message}\n\nMake sure you are running this application as Administrator.",
                     "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            finally
+            {
+                // Never leave the EFI partition mounted after a failure or error
+                if (letterAssigned && !RemoveTemporaryLetter(tempLetter))
+                {
+                    StatusBox.AppendText($"\r\n\r\nThe temporary letter {tempLetter}: could not be removed — remove it in Disk Management.");
+                    MessageBox.Show($"The temporary drive letter {tempLetter}: could not be removed from the EFI partition.\n\nRemove it manually using Disk Management.",
+                        "Temporary Letter Still Assigned", MessageBoxButton.OK, MessageBoxImage.Warning);
+                }
+                RefreshDriveDropdowns();
             }
         }
 
@@ -1860,7 +2182,7 @@ namespace Cloned_GPT_Drive___Boot_Fix
                         parts.Add("(" + entry.Status + ")");
                     if (!detail.IsComplete || physical == null)
                         parts.Add("(unreadable)");
-                    if (detail.IsInUseByWindows || (physical != null && IsDiskProtected(physical.Key))
+                    if (detail.IsInUseByWindows || FindProtectionMatch(physical, detail.DiskId) != null
                         || letters.Any(l => IsLetterInProtectedList(l) || IsHostSystemLetter(l)))
                         parts.Add("🔒");
 
@@ -1974,10 +2296,24 @@ namespace Cloned_GPT_Drive___Boot_Fix
                     return;
 
                 // The confirmation can sit open for any length of time — check again right before running
-                if (!RecheckDiskJustBeforeRunning(choice, check, "Convert"))
+                DiskSafetyCheck final = RecheckDiskJustBeforeRunning(choice, check, "Convert");
+                if (final == null)
                     return;
 
-                string output4 = ExecuteDiskpartCommand($"select disk {choice.Number}", "convert GPT");
+                // ...and once more inside the very diskpart session that converts it
+                string output4 = ExecuteVerifiedDiskpartCommand(
+                    new[] { $"select disk {choice.Number}", "detail disk" },
+                    description => DiskpartParser.IsSameDiskAsConfirmed(description, choice.Number, final.Detail),
+                    new[] { "convert GPT" },
+                    out bool convertSent);
+
+                if (!convertSent)
+                {
+                    ExtrasInfoBox.Text = DeleteLines(output4, 11);
+                    MessageBox.Show($"Disk {choice.Number} changed at the last moment, so it was NOT converted.\n\nClick 'List Disks' and check your selection again.",
+                        "Disk Changed - Not Converted", MessageBoxButton.OK, MessageBoxImage.Error);
+                    return;
+                }
 
                 ExtrasInfoBox.Text = "";
                 ExtrasInfoBox.AppendText(DeleteLines(output4, 11));
@@ -1985,6 +2321,7 @@ namespace Cloned_GPT_Drive___Boot_Fix
                 if (output4.Contains("successfully converted"))
                 {
                     MessageBox.Show("Disk successfully converted to GPT.", "Success", MessageBoxButton.OK, MessageBoxImage.Information);
+                    UpdateDiskChoiceAfterChange(choice, final.Disk.Key);
                 }
                 else if (output4.Contains("The specified disk is not convertible") || output4.Contains("already a GPT disk"))
                 {
@@ -2031,17 +2368,31 @@ namespace Cloned_GPT_Drive___Boot_Fix
                     return;
 
                 // The confirmations can sit open for any length of time — check again right before running
-                if (!RecheckDiskJustBeforeRunning(choice, check, "Clean"))
+                DiskSafetyCheck final = RecheckDiskJustBeforeRunning(choice, check, "Clean");
+                if (final == null)
                     return;
 
-                string output5 = ExecuteDiskpartCommand($"select disk {choice.Number}", "clean");
+                // ...and once more inside the very diskpart session that cleans it
+                string output5 = ExecuteVerifiedDiskpartCommand(
+                    new[] { $"select disk {choice.Number}", "detail disk" },
+                    description => DiskpartParser.IsSameDiskAsConfirmed(description, choice.Number, final.Detail),
+                    new[] { "clean" },
+                    out bool cleanSent);
 
                 ExtrasInfoBox.Text = "";
                 ExtrasInfoBox.AppendText(DeleteLines(output5, 11));
 
-                if (output5.Contains("successfully cleaned"))
+                if (!cleanSent)
+                {
+                    MessageBox.Show($"Disk {choice.Number} changed at the last moment, so it was NOT cleaned.\n\nClick 'List Disks' and check your selection again.",
+                        "Disk Changed - Not Cleaned", MessageBoxButton.OK, MessageBoxImage.Error);
+                    return;
+                }
+
+                if (output5.Contains("succeeded in cleaning") || output5.Contains("successfully cleaned"))
                 {
                     MessageBox.Show("Disk successfully cleaned.", "Success", MessageBoxButton.OK, MessageBoxImage.Information);
+                    UpdateDiskChoiceAfterChange(choice, final.Disk.Key);
                 }
                 else
                 {

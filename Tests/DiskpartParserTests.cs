@@ -104,6 +104,15 @@ namespace Cloned_GPT_Drive___Boot_Fix.Tests
             "  Volume 1     D   Websites (S  NTFS   Partition    931 GB  Healthy\r\n" +
             "\r\nDISKPART> \r\nVolume 1 is the selected volume.\r\n\r\nDISKPART> \r\n";
 
+        private const string EfiVolumeDetail = Banner +
+            "DISKPART> \r\nVolume 5 is the selected volume.\r\n\r\n" +
+            "DISKPART> \r\n" +
+            "  Disk ###  Status         Size     Free     Dyn  Gpt\r\n" +
+            "  --------  -------------  -------  -------  ---  ---\r\n" +
+            "* Disk 1    Online          465 GB  1024 KB        *\r\n\r\n" +
+            "Read-only              : No\r\nHidden                 : No\r\nNo Default Drive Letter: Yes\r\n" +
+            "Volume Capacity        :  100 MB\r\nVolume Free Space      :   68 MB\r\n\r\nDISKPART> ";
+
         private static int Main()
         {
             TestListDisk();
@@ -120,6 +129,9 @@ namespace Cloned_GPT_Drive___Boot_Fix.Tests
             TestDiskKey();
             TestProtectedDiskEntry();
             TestSplitDiskSections();
+            TestSameDiskAsConfirmed();
+            TestVolumeDetail();
+            TestMeaningfulDiskId();
 
             Console.WriteLine();
             Console.WriteLine($"{_checks - _failures}/{_checks} checks passed");
@@ -250,6 +262,35 @@ namespace Cloned_GPT_Drive___Boot_Fix.Tests
             Check(parsed.Name == "Samsung SSD  (465.76 GB)", "protected entry: tabs/newlines in the name can't break the format");
             Check(ProtectedDiskEntry.Parse("OnlyAKey").Key == "OnlyAKey" && ProtectedDiskEntry.Parse("OnlyAKey").DiskId == "", "protected entry: missing fields tolerated");
             Check(ProtectedDiskEntry.Parse(null).Key == "", "protected entry: null tolerated");
+            Check(parsed.SerialNumber == "S6PXNM0T123456" && parsed.SizeBytes == 500105249280, "protected entry: serial and size read back from the key");
+            Check(ProtectedDiskEntry.Parse(@"USB Disk|PNP:USBSTOR\X|64023257088").SerialNumber == "", "protected entry: no serial for a device-path key");
+        }
+
+        private static void TestSameDiskAsConfirmed()
+        {
+            DiskDetail confirmed = DiskpartParser.ParseDiskDetail(CloneDiskDetail, 1);
+            Check(DiskpartParser.IsSameDiskAsConfirmed(CloneDiskDetail, 1, confirmed), "same session: identical disk accepted");
+            Check(!DiskpartParser.IsSameDiskAsConfirmed(CloneDiskDetail.Replace("{0A1B2C3D-1111", "{0A1B2C3D-9999"), 1, confirmed), "same session: different Disk ID refused");
+            Check(!DiskpartParser.IsSameDiskAsConfirmed(CloneDiskDetail.Replace("Samsung SSD 870 EVO 500GB", "Kingston A400"), 1, confirmed), "same session: different model refused");
+            Check(!DiskpartParser.IsSameDiskAsConfirmed(CloneDiskDetail.Replace("Volume 4     E ", "Volume 4     F "), 1, confirmed), "same session: different letters refused");
+            Check(!DiskpartParser.IsSameDiskAsConfirmed(CloneDiskDetail, 2, confirmed), "same session: different disk number refused");
+            Check(!DiskpartParser.IsSameDiskAsConfirmed(InvalidDiskDetail, 1, confirmed), "same session: failed select refused");
+            Check(!DiskpartParser.IsSameDiskAsConfirmed(HostDiskDetail, 0, DiskpartParser.ParseDiskDetail(HostDiskDetail, 0)), "same session: running Windows disk refused");
+            Check(!DiskpartParser.IsSameDiskAsConfirmed(CloneDiskDetail, 1, null), "same session: nothing confirmed refused");
+        }
+
+        private static void TestVolumeDetail()
+        {
+            Check(DiskpartParser.IsVolumeSelected(EfiVolumeDetail, 5), "detail volume: selected volume recognised");
+            Check(!DiskpartParser.IsVolumeSelected(EfiVolumeDetail, 50) && !DiskpartParser.IsVolumeSelected(null, 5), "detail volume: other volume number refused");
+            Check(DiskpartParser.ParseDiskList(EfiVolumeDetail).Select(d => d.Number).SequenceEqual(new[] { 1 }), "detail volume: the disk holding the volume is read");
+        }
+
+        private static void TestMeaningfulDiskId()
+        {
+            Check(DiskpartParser.IsMeaningfulDiskId("{0A1B2C3D-1111-2222-3333-444455556666}") && DiskpartParser.IsMeaningfulDiskId("1A2B3C4D"), "disk id: real IDs accepted");
+            Check(!DiskpartParser.IsMeaningfulDiskId("00000000") && !DiskpartParser.IsMeaningfulDiskId("{00000000-0000-0000-0000-000000000000}") && !DiskpartParser.IsMeaningfulDiskId(""),
+                "disk id: empty/zero IDs of blank disks ignored");
         }
 
         private static void TestSplitDiskSections()

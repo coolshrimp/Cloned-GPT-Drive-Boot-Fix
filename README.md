@@ -13,7 +13,7 @@ Main view — drive selection with Windows ★ / protected 🔒 markers, recomme
 
 ![Main window](screenshots/01-main.png)
 
-Extras tab — disk operations, and the protected drives list showing each drive's physical disk (network drives protected automatically):
+Extras tab — disk operations, and the protected drives list showing each protected disk:
 
 ![Extras tab](screenshots/02-extras.png)
 
@@ -21,10 +21,10 @@ Extras tab — disk operations, and the protected drives list showing each drive
 
 - **Guided Boot Repair** — select your cloned Windows drive and its FAT32 EFI partition, assign a temporary letter, and repair the boot files in one click.
 - **Guide Tab** — built-in step-by-step instructions inside the app.
-- **List Disks Tab** — list disks, convert a disk to GPT, clean a disk, or open Disk Management.
-- **Protected Drives List** — mark drives (like your main OS drive) as protected so they can never be cleaned or wiped through this tool.
-- **First-Run Protection Scan** — on first launch, the app detects your system/boot drives and offers to protect them automatically.
-- **Double-confirmation on destructive actions** — Clean Disk and Convert to GPT require explicit confirmation and are blocked entirely for protected drives.
+- **Extras Tab** — list disks (with size, model and drive letters), convert a disk to GPT, clean a disk, or open Disk Management.
+- **Protected Drives List** — mark disks (like your main OS disk) as protected so they can never be cleaned or wiped through this tool.
+- **First-Run Protection** — on first launch, every connected local drive and the whole disk it is on is protected, and the app shows exactly what was protected.
+- **Verified destructive actions** — Clean Disk, Convert to GPT and Fix Boot re-check the exact disk right before they run, and are blocked entirely for protected disks.
 
 ## How It Works
 
@@ -42,12 +42,16 @@ See the in-app **Guide** tab for the full walkthrough with screenshots-in-text.
 
 ## Safety Features
 
-Because this tool can run destructive disk commands (`clean`, `convert gpt`), the following protections are built in:
+Because this tool can run destructive disk commands (`clean`, `convert gpt`, `bcdboot`), the following protections are built in:
 
-- **Protected Drives list** (persisted per-user) — any drive letter added to this list cannot be targeted by Clean Disk or Convert to GPT.
-- **Automatic system drive protection** — on first run, the app scans logical drives, detects your system/boot drive(s), and offers to protect them.
-- **Manual protection** — use the Info tab's Protect/Unprotect button (protects the whole disk) or the List Disks tab to protect all drive letters belonging to a specific disk, or manage the protected list directly (add/remove).
-- **Confirmation dialogs** — destructive operations show the target disk info and require an explicit Yes; Clean Disk requires a second "final warning" confirmation.
+- **Local disks only** — network drives are never listed, offered or touched.
+- **Protected disks** (persisted per-user) — protection is tied to the physical disk itself (model, serial number and size), not just its drive letter, so a protected disk stays protected even if its letters change. Protected disks cannot be targeted by Clean Disk or Convert to GPT.
+- **Automatic protection on first run** — every connected local drive and its whole disk is protected; use **Rescan & Protect Drives** to protect drives connected later.
+- **The running Windows disk is always blocked** — the disk Windows is booted from, or that holds its system, boot or pagefile volumes, can never be cleaned or converted, protected list or not.
+- **Exact-disk checks** — each disk is identified by its disk number, diskpart Disk ID, hardware identity and drive letters. All of them are checked when you click, and again right before diskpart runs; if anything changed (for example a USB drive was plugged in or removed and the numbers shifted), the operation stops without changing anything. Windows and diskpart must also agree on which drive letters belong to the disk.
+- **Fails safe** — if a disk can't be identified, or diskpart's output can't be fully read, the operation is refused rather than assumed safe.
+- **Fix Boot checks** — before assigning the temporary letter, Fix Boot re-checks that the EFI volume, its disk and the Windows drive are still exactly what you confirmed, and it only runs `bcdboot` after confirming the temporary letter landed on the right disk.
+- **Confirmation dialogs** — destructive operations show the disk's model, size, serial number and every volume on it, and require an explicit Yes; Clean Disk requires a second "final warning" confirmation that names the disk again.
 
 Even with these safeguards, **always double-check which disk/drive is selected before confirming any destructive operation.** This tool modifies partition tables and boot configuration — misuse can make a drive unbootable or erase data.
 

@@ -85,6 +85,30 @@ namespace Cloned_GPT_Drive___Boot_Fix
         public string DiskId = "";
         public string Name = "";
 
+        /// <summary>
+        /// The serial number part of the key, or "" if the key was built without one.
+        /// </summary>
+        public string SerialNumber
+        {
+            get
+            {
+                string[] parts = Key.Split('|');
+                return parts.Length == 3 && parts[1].StartsWith("SN:") ? parts[1].Substring(3) : "";
+            }
+        }
+
+        /// <summary>
+        /// The size part of the key, or 0 if it can't be read.
+        /// </summary>
+        public ulong SizeBytes
+        {
+            get
+            {
+                string[] parts = Key.Split('|');
+                return parts.Length == 3 && ulong.TryParse(parts[2], out ulong size) ? size : 0;
+            }
+        }
+
         public override string ToString()
         {
             return string.Join("\t", Clean(Key), Clean(DiskId), Clean(Name));
@@ -327,6 +351,44 @@ namespace Cloned_GPT_Drive___Boot_Fix
             }
 
             return sections;
+        }
+
+        /// <summary>
+        /// True for a Disk ID that actually identifies a disk — not empty, and not the all-zero
+        /// signature/GUID of an empty or uninitialised disk.
+        /// </summary>
+        public static bool IsMeaningfulDiskId(string diskId)
+        {
+            return !string.IsNullOrEmpty(diskId) && Regex.IsMatch(diskId, "[1-9A-Fa-f]");
+        }
+
+        /// <summary>
+        /// True if diskpart confirmed that volume N is the selected volume.
+        /// </summary>
+        public static bool IsVolumeSelected(string diskpartOutput, int volumeNumber)
+        {
+            return !string.IsNullOrEmpty(diskpartOutput)
+                && Regex.IsMatch(diskpartOutput, $@"\bVolume {volumeNumber} is the selected volume\.", RegexOptions.IgnoreCase);
+        }
+
+        /// <summary>
+        /// Checks the output of 'select disk N' + 'detail disk', read in the same diskpart session
+        /// that is about to run a destructive command, against the details confirmed by the user.
+        /// The disk must be complete, have the same Disk ID, model, volumes and letters, and must
+        /// not be in use by the running Windows.
+        /// </summary>
+        public static bool IsSameDiskAsConfirmed(string diskpartOutput, int diskNumber, DiskDetail confirmed)
+        {
+            if (confirmed == null || !confirmed.IsComplete)
+                return false;
+
+            DiskDetail current = ParseDiskDetail(diskpartOutput, diskNumber);
+            return current.IsComplete
+                && !current.IsInUseByWindows
+                && string.Equals(current.DiskId, confirmed.DiskId, StringComparison.OrdinalIgnoreCase)
+                && current.Model == confirmed.Model
+                && current.Volumes.Select(v => v.Number + "|" + v.Letter + "|" + v.FileSystem + "|" + v.Size)
+                    .SequenceEqual(confirmed.Volumes.Select(v => v.Number + "|" + v.Letter + "|" + v.FileSystem + "|" + v.Size));
         }
 
         private static string StripPrompt(string line)
