@@ -544,46 +544,46 @@ namespace Cloned_GPT_Drive___Boot_Fix
         /// </summary>
         private List<string> GetDriveLettersOnSameDisk(string driveLetter)
         {
-            List<string> result = new List<string>();
-            string normalizedLetter = driveLetter.Substring(0, 1).ToUpper();
+            string normalizedLetter = driveLetter.Substring(0, 1).ToUpper() + ":\\";
 
+            Dictionary<string, int> letterToDisk = GetLetterToDiskMap();
+            List<string> result = letterToDisk.TryGetValue(normalizedLetter, out int diskNumber)
+                ? letterToDisk.Where(l => l.Value == diskNumber).Select(l => l.Key).OrderBy(l => l).ToList()
+                : new List<string>();
+
+            // Fall back to just the selected drive if WMI lookups fail
+            if (result.Count == 0)
+            {
+                result.Add(normalizedLetter);
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Maps every drive letter Windows can place on a physical disk to that disk's number, in a
+        /// single WMI query. Goes from the letter to the disk (the direction that works reliably);
+        /// the other direction, disk -> partitions -> letters, came back empty on some PCs.
+        /// </summary>
+        private static Dictionary<string, int> GetLetterToDiskMap()
+        {
+            var map = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             try
             {
-                // Walk letter → partition → physical disk → ALL partitions on that disk → all letters.
-                // Without the physical-disk hop the query only ever returns the original letter.
-                string partitionQuery = $"ASSOCIATORS OF {{Win32_LogicalDisk.DeviceID='{normalizedLetter}:'}} WHERE AssocClass=Win32_LogicalDiskToPartition";
-                using (var partitionSearcher = new ManagementObjectSearcher(partitionQuery))
+                using (var searcher = new ManagementObjectSearcher("SELECT * FROM Win32_LogicalDiskToPartition"))
                 {
-                    foreach (ManagementObject partition in partitionSearcher.Get())
+                    foreach (ManagementObject link in searcher.Get())
                     {
-                        string driveQuery = $"ASSOCIATORS OF {{Win32_DiskPartition.DeviceID='{partition["DeviceID"]}'}} WHERE AssocClass=Win32_DiskDriveToDiskPartition";
-                        using (var driveSearcher = new ManagementObjectSearcher(driveQuery))
+                        if (DiskpartParser.TryParseLetterToDiskLink(Convert.ToString(link["Antecedent"]), Convert.ToString(link["Dependent"]),
+                            out string letter, out int diskNumber))
                         {
-                            foreach (ManagementObject physicalDisk in driveSearcher.Get())
-                            {
-                                foreach (string letter in GetDriveLettersOnDrive(physicalDisk["DeviceID"].ToString()))
-                                {
-                                    if (!result.Contains(letter))
-                                    {
-                                        result.Add(letter);
-                                    }
-                                }
-                            }
+                            map[letter] = diskNumber;
                         }
                     }
                 }
             }
-            catch
-            {
-                // Fall back to just the selected drive if WMI lookups fail
-            }
-
-            if (result.Count == 0)
-            {
-                result.Add(normalizedLetter + ":\\");
-            }
-
-            return result;
+            catch { }
+            return map;
         }
 
         /// <summary>
@@ -901,7 +901,7 @@ namespace Cloned_GPT_Drive___Boot_Fix
                 {
                     foreach (ManagementObject drive in searcher.Get())
                     {
-                        return BuildPhysicalDisk(drive);
+                        return BuildPhysicalDisk(drive, GetLetterToDiskMap());
                     }
                 }
             }
@@ -918,12 +918,13 @@ namespace Cloned_GPT_Drive___Boot_Fix
             var disks = new List<PhysicalDisk>();
             try
             {
+                Dictionary<string, int> letterToDisk = GetLetterToDiskMap();
                 using (var searcher = new ManagementObjectSearcher("SELECT * FROM Win32_DiskDrive"))
                 {
                     foreach (ManagementObject drive in searcher.Get())
                     {
                         // One unreadable disk (e.g. being unplugged) mustn't hide the others
-                        try { disks.Add(BuildPhysicalDisk(drive)); }
+                        try { disks.Add(BuildPhysicalDisk(drive, letterToDisk)); }
                         catch { failures?.Add($"A disk ({Convert.ToString(drive["Model"])}) could not be read by Windows, so it was NOT protected. Run 'Rescan & Protect Drives' again."); }
                     }
                 }
@@ -948,7 +949,7 @@ namespace Cloned_GPT_Drive___Boot_Fix
             return diskNumber.HasValue ? GetPhysicalDisk(diskNumber.Value) : null;
         }
 
-        private PhysicalDisk BuildPhysicalDisk(ManagementObject drive)
+        private PhysicalDisk BuildPhysicalDisk(ManagementObject drive, Dictionary<string, int> letterToDisk)
         {
             var disk = new PhysicalDisk
             {
@@ -958,7 +959,7 @@ namespace Cloned_GPT_Drive___Boot_Fix
                 SizeBytes = drive["Size"] != null ? Convert.ToUInt64(drive["Size"]) : 0
             };
             disk.Key = DiskpartParser.BuildDiskKey(disk.Model, disk.SerialNumber, disk.SizeBytes, Convert.ToString(drive["PNPDeviceID"]));
-            disk.Letters = GetDriveLettersOnDrive(Convert.ToString(drive["DeviceID"]));
+            disk.Letters = letterToDisk.Where(l => l.Value == disk.Number).Select(l => l.Key).OrderBy(l => l).ToList();
             return disk;
         }
 
@@ -969,51 +970,6 @@ namespace Cloned_GPT_Drive___Boot_Fix
         {
             string model = disk.Model.Length > 0 ? disk.Model : "Unknown disk";
             return $"{model} ({FormatBytes((long)disk.SizeBytes)})";
-        }
-
-        /// <summary>
-        /// Returns every drive letter (e.g. "C:\") on a physical disk, given its WMI DeviceID
-        /// (e.g. "\\.\PHYSICALDRIVE1"). Uses WMI rather than diskpart text, so it works
-        /// regardless of the Windows display language.
-        /// </summary>
-        private List<string> GetDriveLettersOnDrive(string diskDeviceId)
-        {
-            var result = new List<string>();
-            if (string.IsNullOrEmpty(diskDeviceId))
-                return result;
-
-            try
-            {
-                AddDriveLettersOnDrive(diskDeviceId, result);
-            }
-            catch
-            {
-                // Partial result; Clean/Convert compare it with diskpart's list and refuse on a mismatch
-            }
-
-            return result;
-        }
-
-        private static void AddDriveLettersOnDrive(string diskDeviceId, List<string> result)
-        {
-            string escapedDiskId = diskDeviceId.Replace(@"\", @"\\");
-            string allPartitionsQuery = $"ASSOCIATORS OF {{Win32_DiskDrive.DeviceID='{escapedDiskId}'}} WHERE AssocClass=Win32_DiskDriveToDiskPartition";
-            using (var allPartitionsSearcher = new ManagementObjectSearcher(allPartitionsQuery))
-            {
-                foreach (ManagementObject diskPartition in allPartitionsSearcher.Get())
-                {
-                    string logicalQuery = $"ASSOCIATORS OF {{Win32_DiskPartition.DeviceID='{diskPartition["DeviceID"]}'}} WHERE AssocClass=Win32_LogicalDiskToPartition";
-                    using (var logicalSearcher = new ManagementObjectSearcher(logicalQuery))
-                    {
-                        foreach (ManagementObject logicalDisk in logicalSearcher.Get())
-                        {
-                            string letter = logicalDisk["DeviceID"].ToString().ToUpper() + "\\";
-                            if (!result.Contains(letter))
-                                result.Add(letter);
-                        }
-                    }
-                }
-            }
         }
 
         /// <summary>

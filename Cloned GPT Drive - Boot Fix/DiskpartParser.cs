@@ -364,6 +364,26 @@ namespace Cloned_GPT_Drive___Boot_Fix
         }
 
         /// <summary>
+        /// Reads one Win32_LogicalDiskToPartition link: the partition side names the disk
+        /// ("...Win32_DiskPartition.DeviceID="Disk #1, Partition #2"") and the logical side the
+        /// letter ("...Win32_LogicalDisk.DeviceID="E:""). Returns false if either can't be read.
+        /// </summary>
+        public static bool TryParseLetterToDiskLink(string antecedent, string dependent, out string letter, out int diskNumber)
+        {
+            letter = "";
+            diskNumber = -1;
+
+            Match disk = Regex.Match(antecedent ?? "", @"Disk #(\d+), Partition #\d+");
+            Match drive = Regex.Match(dependent ?? "", @"DeviceID=""([A-Za-z]):""");
+            if (!disk.Success || !drive.Success)
+                return false;
+
+            letter = drive.Groups[1].Value.ToUpper() + ":\\";
+            diskNumber = int.Parse(disk.Groups[1].Value);
+            return true;
+        }
+
+        /// <summary>
         /// True for a Disk ID that actually identifies a disk — not empty, and not the all-zero
         /// signature/GUID of an empty or uninitialised disk.
         /// </summary>

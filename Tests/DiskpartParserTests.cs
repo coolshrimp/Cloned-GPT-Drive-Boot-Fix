@@ -132,6 +132,7 @@ namespace Cloned_GPT_Drive___Boot_Fix.Tests
             TestSameDiskAsConfirmed();
             TestVolumeDetail();
             TestMeaningfulDiskId();
+            TestLetterToDiskLink();
 
             Console.WriteLine();
             Console.WriteLine($"{_checks - _failures}/{_checks} checks passed");
@@ -290,6 +291,24 @@ namespace Cloned_GPT_Drive___Boot_Fix.Tests
             Check(DiskpartParser.IsVolumeSelected(EfiVolumeDetail, 5), "detail volume: selected volume recognised");
             Check(!DiskpartParser.IsVolumeSelected(EfiVolumeDetail, 50) && !DiskpartParser.IsVolumeSelected(null, 5), "detail volume: other volume number refused");
             Check(DiskpartParser.ParseDiskList(EfiVolumeDetail).Select(d => d.Number).SequenceEqual(new[] { 1 }), "detail volume: the disk holding the volume is read");
+        }
+
+        private static void TestLetterToDiskLink()
+        {
+            bool ok = DiskpartParser.TryParseLetterToDiskLink(
+                @"\\TESTPC\root\cimv2:Win32_DiskPartition.DeviceID=""Disk #1, Partition #2""",
+                @"\\TESTPC\root\cimv2:Win32_LogicalDisk.DeviceID=""m:""",
+                out string letter, out int disk);
+            Check(ok && letter == "M:\\" && disk == 1, "letter link: letter and disk number read from WMI paths");
+
+            DiskpartParser.TryParseLetterToDiskLink(
+                @"\\TESTPC\root\cimv2:Win32_DiskPartition.DeviceID=""Disk #12, Partition #0""",
+                @"\\TESTPC\root\cimv2:Win32_LogicalDisk.DeviceID=""C:""",
+                out letter, out disk);
+            Check(letter == "C:\\" && disk == 12, "letter link: two-digit disk number");
+
+            Check(!DiskpartParser.TryParseLetterToDiskLink("garbage", @"Win32_LogicalDisk.DeviceID=""C:""", out letter, out disk)
+                && !DiskpartParser.TryParseLetterToDiskLink(null, null, out letter, out disk), "letter link: unreadable links ignored");
         }
 
         private static void TestMeaningfulDiskId()
