@@ -44,6 +44,8 @@ namespace Cloned_GPT_Drive___Boot_Fix
         public bool DetailFound;        // the 'detail disk' block (Disk ID line) was present
         public string Model = "";
         public string DiskId = "";
+        public string BusType = "";     // "Type" line, e.g. SATA, NVMe, USB
+        public string LocationPath = "";    // physical connection, e.g. PCIROOT(0)#PCI(1700)#ATA(C01T00L00)
         public bool IsBootDisk;
         public bool IsPagefileDisk;
         public bool IsHibernationDisk;
@@ -307,6 +309,14 @@ namespace Cloned_GPT_Drive___Boot_Fix
                     continue;
                 }
 
+                Match busType = Regex.Match(line, @"^Type\s*:\s*(.+)$", RegexOptions.IgnoreCase);
+                if (busType.Success && detail.DetailFound && detail.BusType.Length == 0)
+                    detail.BusType = busType.Groups[1].Value.Trim();
+
+                Match location = Regex.Match(line, @"^Location Path\s*:\s*(.+)$", RegexOptions.IgnoreCase);
+                if (location.Success && detail.DetailFound && detail.LocationPath.Length == 0)
+                    detail.LocationPath = location.Groups[1].Value.Trim();
+
                 if (IsYesFlag(line, "Boot Disk")) detail.IsBootDisk = true;
                 if (IsYesFlag(line, "Pagefile Disk")) detail.IsPagefileDisk = true;
                 if (IsYesFlag(line, "Hibernation File Disk")) detail.IsHibernationDisk = true;
@@ -374,8 +384,9 @@ namespace Cloned_GPT_Drive___Boot_Fix
         /// <summary>
         /// Checks the output of 'select disk N' + 'detail disk', read in the same diskpart session
         /// that is about to run a destructive command, against the details confirmed by the user.
-        /// The disk must be complete, have the same Disk ID, model, volumes and letters, and must
-        /// not be in use by the running Windows.
+        /// The disk must be complete, have the same Disk ID, model, connection (bus type and
+        /// location path), volumes and letters, and must not be in use by the running Windows.
+        /// The connection is what tells apart two same-model blank disks with the same empty ID.
         /// </summary>
         public static bool IsSameDiskAsConfirmed(string diskpartOutput, int diskNumber, DiskDetail confirmed)
         {
@@ -387,6 +398,8 @@ namespace Cloned_GPT_Drive___Boot_Fix
                 && !current.IsInUseByWindows
                 && string.Equals(current.DiskId, confirmed.DiskId, StringComparison.OrdinalIgnoreCase)
                 && current.Model == confirmed.Model
+                && current.BusType == confirmed.BusType
+                && current.LocationPath == confirmed.LocationPath
                 && current.Volumes.Select(v => v.Number + "|" + v.Letter + "|" + v.FileSystem + "|" + v.Size)
                     .SequenceEqual(confirmed.Volumes.Select(v => v.Number + "|" + v.Letter + "|" + v.FileSystem + "|" + v.Size));
         }

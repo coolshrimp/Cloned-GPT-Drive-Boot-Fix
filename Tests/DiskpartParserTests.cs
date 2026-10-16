@@ -277,6 +277,12 @@ namespace Cloned_GPT_Drive___Boot_Fix.Tests
             Check(!DiskpartParser.IsSameDiskAsConfirmed(InvalidDiskDetail, 1, confirmed), "same session: failed select refused");
             Check(!DiskpartParser.IsSameDiskAsConfirmed(HostDiskDetail, 0, DiskpartParser.ParseDiskDetail(HostDiskDetail, 0)), "same session: running Windows disk refused");
             Check(!DiskpartParser.IsSameDiskAsConfirmed(CloneDiskDetail, 1, null), "same session: nothing confirmed refused");
+            Check(confirmed.BusType == "SATA" && confirmed.LocationPath == "PCIROOT(0)#PCI(1700)#ATA(C01T00L00)", "detail: bus type and location path read");
+            Check(!DiskpartParser.IsSameDiskAsConfirmed(CloneDiskDetail.Replace("ATA(C01T00L00)", "ATA(C02T00L00)"), 1, confirmed),
+                "same session: same-model disk on another port refused");
+
+            DiskDetail emptyConfirmed = DiskpartParser.ParseDiskDetail(EmptyDiskDetail, 3);
+            Check(DiskpartParser.IsSameDiskAsConfirmed(EmptyDiskDetail, 3, emptyConfirmed), "same session: blank disk with zero ID accepted when unchanged");
         }
 
         private static void TestVolumeDetail()
