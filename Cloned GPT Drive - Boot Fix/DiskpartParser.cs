@@ -74,6 +74,40 @@ namespace Cloned_GPT_Drive___Boot_Fix
     }
 
     /// <summary>
+    /// A protected physical disk as stored in settings: its hardware key (see
+    /// DiskpartParser.BuildDiskKey), the Disk ID it had when protected, and a name to show.
+    /// Only the hardware key decides protection — a clone copies the Disk ID, so matching on
+    /// it would tie the clone and its source together.
+    /// </summary>
+    internal class ProtectedDiskEntry
+    {
+        public string Key = "";
+        public string DiskId = "";
+        public string Name = "";
+
+        public override string ToString()
+        {
+            return string.Join("\t", Clean(Key), Clean(DiskId), Clean(Name));
+        }
+
+        public static ProtectedDiskEntry Parse(string stored)
+        {
+            string[] parts = (stored ?? "").Split('\t');
+            return new ProtectedDiskEntry
+            {
+                Key = parts[0].Trim(),
+                DiskId = parts.Length > 1 ? parts[1].Trim() : "",
+                Name = parts.Length > 2 ? parts[2].Trim() : ""
+            };
+        }
+
+        private static string Clean(string value)
+        {
+            return (value ?? "").Replace("\t", " ").Replace("\r", " ").Replace("\n", " ").Trim();
+        }
+    }
+
+    /// <summary>
     /// Pure parsing of diskpart text output. No disk access happens in here, which keeps it
     /// safe to unit test on any machine.
     /// </summary>

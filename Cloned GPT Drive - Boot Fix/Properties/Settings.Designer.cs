@@ -46,5 +46,16 @@ namespace Cloned_GPT_Drive___Boot_Fix.Properties {
                 this["IsFirstRun"] = value;
             }
         }
+
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        public global::System.Collections.Specialized.StringCollection ProtectedDisks {
+            get {
+                return ((global::System.Collections.Specialized.StringCollection)(this["ProtectedDisks"]));
+            }
+            set {
+                this["ProtectedDisks"] = value;
+            }
+        }
     }
 }

@@ -118,6 +118,8 @@ namespace Cloned_GPT_Drive___Boot_Fix.Tests
             TestEmptyOutputFailsClosed();
             TestVolumeTableEndsAtBlankLine();
             TestDiskKey();
+            TestProtectedDiskEntry();
+            TestSplitDiskSections();
 
             Console.WriteLine();
             Console.WriteLine($"{_checks - _failures}/{_checks} checks passed");
@@ -233,6 +235,34 @@ namespace Cloned_GPT_Drive___Boot_Fix.Tests
             Check(DiskpartParser.BuildDiskKey("USB Disk", "", 64023257088, @"USBSTOR\DISK&VEN_X\123") == @"USB Disk|PNP:USBSTOR\DISK&VEN_X\123|64023257088",
                 "disk key: falls back to device path without a serial");
             Check(DiskpartParser.BuildDiskKey("USB Disk", null, 0, null) == "", "disk key: empty when the disk cannot be identified");
+        }
+
+        private static void TestProtectedDiskEntry()
+        {
+            var entry = new ProtectedDiskEntry
+            {
+                Key = "Samsung SSD 870 EVO 500GB|SN:S6PXNM0T123456|500105249280",
+                DiskId = "{0A1B2C3D-1111-2222-3333-444455556666}",
+                Name = "Samsung\tSSD\r\n(465.76 GB)"
+            };
+            ProtectedDiskEntry parsed = ProtectedDiskEntry.Parse(entry.ToString());
+            Check(parsed.Key == entry.Key && parsed.DiskId == entry.DiskId, "protected entry: key and Disk ID round-trip");
+            Check(parsed.Name == "Samsung SSD  (465.76 GB)", "protected entry: tabs/newlines in the name can't break the format");
+            Check(ProtectedDiskEntry.Parse("OnlyAKey").Key == "OnlyAKey" && ProtectedDiskEntry.Parse("OnlyAKey").DiskId == "", "protected entry: missing fields tolerated");
+            Check(ProtectedDiskEntry.Parse(null).Key == "", "protected entry: null tolerated");
+        }
+
+        private static void TestSplitDiskSections()
+        {
+            string combined = CloneDiskDetail + HostDiskDetail.Replace(Banner, "") + InvalidDiskDetail.Replace(Banner, "");
+            var sections = DiskpartParser.SplitDiskSections(combined);
+            Check(sections.Count == 2 && sections.ContainsKey(0) && sections.ContainsKey(1), "sections: one per selected disk, failed select gets none");
+            Check(DiskpartParser.ParseDiskDetail(sections[1], 1).Model == "Samsung SSD 870 EVO 500GB", "sections: Disk 1 section holds Disk 1's details");
+            Check(DiskpartParser.ParseDiskDetail(sections[0], 0).IsInUseByWindows, "sections: Disk 0 section holds Disk 0's details");
+            Check(!DiskpartParser.ParseDiskDetail(sections[1], 1).IsInUseByWindows, "sections: Disk 0's flags do not leak into Disk 1");
+
+            var twice = DiskpartParser.SplitDiskSections(CloneDiskDetail + CloneDiskDetail.Replace(Banner, ""));
+            Check(twice.ContainsKey(1) && !DiskpartParser.ParseDiskDetail(twice[1], 1).IsComplete, "sections: a disk selected twice is treated as unreadable");
         }
     }
 }

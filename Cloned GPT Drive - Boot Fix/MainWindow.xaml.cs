@@ -108,9 +108,14 @@ namespace Cloned_GPT_Drive___Boot_Fix
                 Properties.Settings.Default.IsFirstRun = false;
                 Properties.Settings.Default.Save();
             }
+            else if (Properties.Settings.Default.ProtectedDisks == null)
+            {
+                // First launch after upgrading from a version that only protected letters
+                ProtectDisksOfProtectedLetters();
+            }
 
             RefreshDriveDropdowns();
-            ProtectNetworkDrives();
+            RemoveNetworkDrivesFromProtectedList();
             RefreshProtectedDrivesList();
 
             // Initial refresh of volumes on launch
@@ -197,8 +202,10 @@ namespace Cloned_GPT_Drive___Boot_Fix
 
             foreach (var drive in Environment.GetLogicalDrives())
             {
+                // Local disks only: network drives are never offered (their letters are
+                // simply in use, so they also never show up as free temporary letters)
                 DriveInfo driveInfo = new DriveInfo(drive);
-                if (driveInfo.IsReady)
+                if (driveInfo.IsReady && IsLocalDrive(driveInfo))
                 {
                     // Markers go at the END, tight after the name/label; the 🪟 emoji
                     // is too new for the default font and rendered as a square
@@ -207,8 +214,6 @@ namespace Cloned_GPT_Drive___Boot_Fix
                         displayParts.Add(driveInfo.VolumeLabel);
                     if (IsWindowsInstallation(drive))
                         displayParts.Add("★ Windows");
-                    if (driveInfo.DriveType == DriveType.Network)
-                        displayParts.Add("(Network)");
                     if (IsDriveProtected(drive))
                         displayParts.Add("🔒");
 
@@ -248,14 +253,30 @@ namespace Cloned_GPT_Drive___Boot_Fix
         }
 
         /// <summary>
-        /// Ensures all mapped network drives are always in the protected list — they are
-        /// never valid targets for cleaning/formatting through this tool.
+        /// True for drives on a local disk (fixed or removable). This is a local disk tool —
+        /// network, optical and RAM drives are never offered as targets.
         /// </summary>
-        private void ProtectNetworkDrives()
+        private static bool IsLocalDrive(DriveInfo driveInfo)
         {
             try
             {
-                bool added = false;
+                return driveInfo.DriveType == DriveType.Fixed || driveInfo.DriveType == DriveType.Removable;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Older versions added mapped network drives to the protected list. They are not local
+        /// disks and are no longer shown at all, so drop entries for letters that are network drives.
+        /// </summary>
+        private void RemoveNetworkDrivesFromProtectedList()
+        {
+            try
+            {
+                bool removed = false;
 
                 foreach (var drive in Environment.GetLogicalDrives())
                 {
@@ -263,16 +284,16 @@ namespace Cloned_GPT_Drive___Boot_Fix
                     {
                         var driveInfo = new DriveInfo(drive);
                         if (driveInfo.DriveType == DriveType.Network
-                            && !Properties.Settings.Default.ProtectedDrives.Contains(drive))
+                            && Properties.Settings.Default.ProtectedDrives.Contains(drive))
                         {
-                            Properties.Settings.Default.ProtectedDrives.Add(drive);
-                            added = true;
+                            Properties.Settings.Default.ProtectedDrives.Remove(drive);
+                            removed = true;
                         }
                     }
                     catch { }
                 }
 
-                if (added)
+                if (removed)
                     Properties.Settings.Default.Save();
             }
             catch { }
@@ -299,50 +320,85 @@ namespace Cloned_GPT_Drive___Boot_Fix
         }
 
         /// <summary>
-        /// Refreshes the protected drives list box from settings, showing which physical
-        /// disk each letter lives on and its volume label, e.g. "Disk 1 — C:\  Windows".
-        /// The raw letter ("C:\") is kept in each item's Tag for removal.
+        /// What a row in the protected list stands for: a whole physical disk (by hardware key)
+        /// or a single drive letter.
+        /// </summary>
+        private class ProtectedListItem
+        {
+            public string DiskKey;          // set for a protected disk
+            public string DiskName = "";
+            public string Letter;           // set for a protected letter, e.g. "C:\"
+            public List<string> Letters = new List<string>();   // letters the disk has right now
+        }
+
+        /// <summary>
+        /// Refreshes the protected drives list box from settings. Protected disks are shown with
+        /// their current disk number, model, size and letters, e.g. "Disk 1 — Samsung SSD (465 GB)  C: D:".
+        /// Letters are listed on their own only when they are not on a protected disk (e.g. a
+        /// protected letter whose drive is not connected). Each item's Tag says what it stands for.
         /// </summary>
         private void RefreshProtectedDrivesList()
         {
             ProtectedDrives_ListBox.Items.Clear();
 
+            List<PhysicalDisk> connectedDisks = GetAllPhysicalDisks();
+            var lettersOnProtectedDisks = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (ProtectedDiskEntry entry in GetProtectedDisks()
+                .OrderBy(en => connectedDisks.FirstOrDefault(d => d.Key == en.Key)?.Number ?? int.MaxValue))
+            {
+                PhysicalDisk disk = connectedDisks.FirstOrDefault(d => d.Key == entry.Key);
+                string display = disk != null
+                    ? $"Disk {disk.Number} — {DescribeDisk(disk)}  {FormatLetters(disk.Letters)}"
+                    : $"Not connected — {entry.Name}";
+
+                if (disk != null)
+                    lettersOnProtectedDisks.UnionWith(disk.Letters);
+
+                ProtectedDrives_ListBox.Items.Add(new ListBoxItem
+                {
+                    Content = "🔒 " + display,
+                    Tag = new ProtectedListItem { DiskKey = entry.Key, DiskName = entry.Name, Letters = disk != null ? disk.Letters : new List<string>() },
+                    ToolTip = display
+                });
+            }
+
             if (Properties.Settings.Default.ProtectedDrives == null)
                 return;
 
-            var protectedInfo = new List<Tuple<string, int?, string, bool>>();
+            var protectedInfo = new List<Tuple<string, int?, string>>();
 
             foreach (string drive in Properties.Settings.Default.ProtectedDrives)
             {
                 string letter = drive.Substring(0, 1).ToUpper();
+                if (lettersOnProtectedDisks.Contains(letter + ":\\"))
+                    continue;
 
                 string label = "";
-                bool isNetwork = false;
                 try
                 {
                     var driveInfo = new DriveInfo(letter + ":\\");
-                    isNetwork = driveInfo.DriveType == DriveType.Network;
+                    if (driveInfo.DriveType == DriveType.Network)
+                        continue;
                     if (driveInfo.IsReady)
                         label = driveInfo.VolumeLabel;
                 }
                 catch { }
 
-                int? diskNumber = isNetwork ? null : GetDiskNumberForLetter(letter);
-
-                protectedInfo.Add(Tuple.Create(letter, diskNumber, label, isNetwork));
+                protectedInfo.Add(Tuple.Create(letter, GetDiskNumberForLetter(letter), label));
             }
 
-            // Local disks first (sorted by disk number), network drives at the bottom
-            foreach (var info in protectedInfo.OrderBy(t => t.Item4).ThenBy(t => t.Item2 ?? int.MaxValue).ThenBy(t => t.Item1))
+            // Sorted by disk number; letters not on any connected disk at the bottom
+            foreach (var info in protectedInfo.OrderBy(t => t.Item2 ?? int.MaxValue).ThenBy(t => t.Item1))
             {
-                string diskText = info.Item4 ? "Network" : (info.Item2.HasValue ? "Disk " + info.Item2.Value : "Disk ?");
+                string diskText = info.Item2.HasValue ? "Disk " + info.Item2.Value : "Not connected";
                 string labelText = string.IsNullOrEmpty(info.Item3) ? "" : "  " + info.Item3;
                 string display = $"{diskText} — {info.Item1}:\\{labelText}";
 
                 ProtectedDrives_ListBox.Items.Add(new ListBoxItem
                 {
                     Content = display,
-                    Tag = info.Item1 + ":\\",
+                    Tag = new ProtectedListItem { Letter = info.Item1 + ":\\" },
                     ToolTip = display
                 });
             }
@@ -350,25 +406,35 @@ namespace Cloned_GPT_Drive___Boot_Fix
 
         private void RemoveProtection_btn_Click(object sender, RoutedEventArgs e)
         {
-            if (ProtectedDrives_ListBox.SelectedItem == null)
+            if (!(ProtectedDrives_ListBox.SelectedItem is ListBoxItem lbi) || !(lbi.Tag is ProtectedListItem selected))
             {
                 MessageBox.Show("Please select a drive from the protected list to remove.", "No Selection", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
-            string selectedDrive = ProtectedDrives_ListBox.SelectedItem is ListBoxItem lbi && lbi.Tag != null
-                ? lbi.Tag.ToString()
-                : ProtectedDrives_ListBox.SelectedItem.ToString();
+            string target = selected.DiskKey != null
+                ? $"this disk:\n\n  {lbi.ToolTip}\n\nThe whole disk{(selected.Letters.Count > 0 ? " and its drive(s) " + FormatLetters(selected.Letters) : "")}"
+                : $"{selected.Letter}?\n\nThis drive";
 
             var result = MessageBox.Show(
-                $"Are you sure you want to remove protection from {selectedDrive}?\n\nThis drive will then be eligible for cleaning/formatting.",
+                $"Are you sure you want to remove protection from {target} will then be eligible for cleaning/formatting.",
                 "Remove Protection?",
                 MessageBoxButton.YesNo,
                 MessageBoxImage.Question);
 
             if (result == MessageBoxResult.Yes)
             {
-                Properties.Settings.Default.ProtectedDrives.Remove(selectedDrive);
+                if (selected.DiskKey != null)
+                {
+                    RemoveProtectedDisk(selected.DiskKey);
+                    foreach (string letter in selected.Letters)
+                        Properties.Settings.Default.ProtectedDrives?.Remove(letter);
+                }
+                else
+                {
+                    Properties.Settings.Default.ProtectedDrives?.Remove(selected.Letter);
+                }
+
                 Properties.Settings.Default.Save();
                 RefreshProtectedDrivesList();
                 RefreshDriveDropdowns();
@@ -379,40 +445,9 @@ namespace Cloned_GPT_Drive___Boot_Fix
         {
             try
             {
-                // Rescan all connected, ready drives and protect every one of them so that
-                // nothing can be cleaned/formatted without the user explicitly unprotecting it first.
-                List<string> newlyProtected = new List<string>();
-
-                if (Properties.Settings.Default.ProtectedDrives == null)
-                {
-                    Properties.Settings.Default.ProtectedDrives = new System.Collections.Specialized.StringCollection();
-                }
-
-                foreach (var drive in Environment.GetLogicalDrives())
-                {
-                    try
-                    {
-                        DriveInfo driveInfo = new DriveInfo(drive);
-                        if (!driveInfo.IsReady)
-                            continue;
-
-                        // Protect every drive letter on the same physical disk, not just this one.
-                        foreach (string letterOnDisk in GetDriveLettersOnSameDisk(drive))
-                        {
-                            if (!Properties.Settings.Default.ProtectedDrives.Contains(letterOnDisk))
-                            {
-                                Properties.Settings.Default.ProtectedDrives.Add(letterOnDisk);
-                                newlyProtected.Add(letterOnDisk);
-                            }
-                        }
-                    }
-                    catch { }
-                }
-
-                if (newlyProtected.Count > 0)
-                {
-                    Properties.Settings.Default.Save();
-                }
+                // Rescan all connected, ready drives and protect every one of them (and their whole
+                // disks) so nothing can be cleaned/formatted without the user explicitly unprotecting it first.
+                List<string> newlyProtected = ProtectAllConnectedDrives();
 
                 RefreshProtectedDrivesList();
                 RefreshDriveDropdowns();
@@ -425,7 +460,7 @@ namespace Cloned_GPT_Drive___Boot_Fix
 
                 if (newlyProtected.Count > 0)
                 {
-                    MessageBox.Show($"Rescan complete. {newlyProtected.Count} drive(s) were newly protected:\n\n" + string.Join("\n", newlyProtected),
+                    MessageBox.Show($"Rescan complete. Newly protected:\n\n" + string.Join("\n", newlyProtected.Select(l => "  • " + l)),
                         "Rescan Complete", MessageBoxButton.OK, MessageBoxImage.Information);
                 }
                 else
@@ -681,21 +716,68 @@ namespace Cloned_GPT_Drive___Boot_Fix
                 {
                     foreach (ManagementObject drive in searcher.Get())
                     {
-                        var disk = new PhysicalDisk
-                        {
-                            Number = diskNumber,
-                            Model = Convert.ToString(drive["Model"]).Trim(),
-                            SerialNumber = Convert.ToString(drive["SerialNumber"]).Trim(),
-                            SizeBytes = drive["Size"] != null ? Convert.ToUInt64(drive["Size"]) : 0
-                        };
-                        disk.Key = DiskpartParser.BuildDiskKey(disk.Model, disk.SerialNumber, disk.SizeBytes, Convert.ToString(drive["PNPDeviceID"]));
-                        disk.Letters = GetDriveLettersOnDrive(Convert.ToString(drive["DeviceID"]));
-                        return disk;
+                        return BuildPhysicalDisk(drive);
                     }
                 }
             }
             catch { }
             return null;
+        }
+
+        /// <summary>
+        /// Returns every physical disk Windows currently sees, ordered by disk number.
+        /// </summary>
+        private List<PhysicalDisk> GetAllPhysicalDisks()
+        {
+            var disks = new List<PhysicalDisk>();
+            try
+            {
+                using (var searcher = new ManagementObjectSearcher("SELECT * FROM Win32_DiskDrive"))
+                {
+                    foreach (ManagementObject drive in searcher.Get())
+                    {
+                        disks.Add(BuildPhysicalDisk(drive));
+                    }
+                }
+            }
+            catch { }
+            return disks.OrderBy(d => d.Number).ToList();
+        }
+
+        /// <summary>
+        /// Returns the physical disk a drive letter lives on, or null for network drives and
+        /// letters that aren't on a physical disk.
+        /// </summary>
+        private PhysicalDisk GetPhysicalDiskForLetter(string driveLetter)
+        {
+            if (string.IsNullOrEmpty(driveLetter))
+                return null;
+
+            int? diskNumber = GetDiskNumberForLetter(driveLetter.Substring(0, 1).ToUpper());
+            return diskNumber.HasValue ? GetPhysicalDisk(diskNumber.Value) : null;
+        }
+
+        private PhysicalDisk BuildPhysicalDisk(ManagementObject drive)
+        {
+            var disk = new PhysicalDisk
+            {
+                Number = Convert.ToInt32(drive["Index"]),
+                Model = Convert.ToString(drive["Model"]).Trim(),
+                SerialNumber = Convert.ToString(drive["SerialNumber"]).Trim(),
+                SizeBytes = drive["Size"] != null ? Convert.ToUInt64(drive["Size"]) : 0
+            };
+            disk.Key = DiskpartParser.BuildDiskKey(disk.Model, disk.SerialNumber, disk.SizeBytes, Convert.ToString(drive["PNPDeviceID"]));
+            disk.Letters = GetDriveLettersOnDrive(Convert.ToString(drive["DeviceID"]));
+            return disk;
+        }
+
+        /// <summary>
+        /// A short name for a disk that the user can recognise, e.g. "Samsung SSD 870 EVO (465.76 GB)".
+        /// </summary>
+        private string DescribeDisk(PhysicalDisk disk)
+        {
+            string model = disk.Model.Length > 0 ? disk.Model : "Unknown disk";
+            return $"{model} ({FormatBytes((long)disk.SizeBytes)})";
         }
 
         /// <summary>
@@ -775,7 +857,10 @@ namespace Cloned_GPT_Drive___Boot_Fix
             if (check.Detail.IsInUseByWindows || check.Letters.Any(IsHostSystemLetter))
                 check.BlockReasons.Add($"Disk {diskNumber} holds the copy of Windows this PC is running from.");
 
-            List<string> protectedLetters = check.Letters.Where(IsDriveProtected).ToList();
+            if (check.Disk != null && IsDiskProtected(check.Disk.Key))
+                check.BlockReasons.Add($"Disk {diskNumber} ({DescribeDisk(check.Disk)}) is on the protected list.");
+
+            List<string> protectedLetters = check.Letters.Where(IsLetterInProtectedList).ToList();
             if (protectedLetters.Count > 0)
                 check.BlockReasons.Add("It contains protected drive(s): " + string.Join("  ", protectedLetters));
 
@@ -1055,18 +1140,31 @@ namespace Cloned_GPT_Drive___Boot_Fix
         }
 
         /// <summary>
-        /// Checks if a drive letter is in the protected list
+        /// Checks if a drive is protected, either by its letter or because the physical disk
+        /// it lives on is protected. The disk check keeps a disk protected when its letters change.
         /// </summary>
         private bool IsDriveProtected(string driveLetter)
         {
-            if (Properties.Settings.Default.ProtectedDrives == null)
+            if (IsLetterInProtectedList(driveLetter))
+                return true;
+
+            PhysicalDisk disk = GetPhysicalDiskForLetter(driveLetter);
+            return disk != null && IsDiskProtected(disk.Key);
+        }
+
+        /// <summary>
+        /// Checks if a drive letter itself is in the protected list
+        /// </summary>
+        private bool IsLetterInProtectedList(string driveLetter)
+        {
+            if (Properties.Settings.Default.ProtectedDrives == null || string.IsNullOrEmpty(driveLetter))
                 return false;
 
             string normalizedLetter = driveLetter.Substring(0, 1).ToUpper();
 
             foreach (string protectedDrive in Properties.Settings.Default.ProtectedDrives)
             {
-                if (protectedDrive.StartsWith(normalizedLetter))
+                if (protectedDrive.StartsWith(normalizedLetter, StringComparison.OrdinalIgnoreCase))
                     return true;
             }
 
@@ -1074,60 +1172,171 @@ namespace Cloned_GPT_Drive___Boot_Fix
         }
 
         /// <summary>
-        /// Shows first run dialog to protect system drives
+        /// Returns the physical disks in the protected list.
         /// </summary>
-        private void ShowFirstRunDialog()
+        private List<ProtectedDiskEntry> GetProtectedDisks()
         {
-            StringBuilder message = new StringBuilder();
-            message.AppendLine("Welcome to Cloned GPT Drive - Boot Fix!");
-            message.AppendLine();
-            message.AppendLine("For your safety, this tool will protect your system drives.");
-            message.AppendLine("The following drives have been detected:");
-            message.AppendLine();
+            if (Properties.Settings.Default.ProtectedDisks == null)
+                return new List<ProtectedDiskEntry>();
 
-            List<string> systemDrives = new List<string>();
+            return Properties.Settings.Default.ProtectedDisks
+                .Cast<string>()
+                .Select(ProtectedDiskEntry.Parse)
+                .Where(entry => entry.Key.Length > 0)
+                .ToList();
+        }
+
+        /// <summary>
+        /// Checks if a physical disk (by hardware key) is in the protected list
+        /// </summary>
+        private bool IsDiskProtected(string diskKey)
+        {
+            return !string.IsNullOrEmpty(diskKey) && GetProtectedDisks().Any(entry => entry.Key == diskKey);
+        }
+
+        /// <summary>
+        /// Adds a physical disk to the protected list. Returns true if it was newly added.
+        /// </summary>
+        private bool AddProtectedDisk(PhysicalDisk disk, string diskId = "")
+        {
+            if (disk == null || string.IsNullOrEmpty(disk.Key) || IsDiskProtected(disk.Key))
+                return false;
+
+            if (Properties.Settings.Default.ProtectedDisks == null)
+                Properties.Settings.Default.ProtectedDisks = new System.Collections.Specialized.StringCollection();
+
+            Properties.Settings.Default.ProtectedDisks.Add(new ProtectedDiskEntry
+            {
+                Key = disk.Key,
+                DiskId = diskId ?? "",
+                Name = DescribeDisk(disk)
+            }.ToString());
+            Properties.Settings.Default.Save();
+            return true;
+        }
+
+        /// <summary>
+        /// Removes a physical disk (by hardware key) from the protected list.
+        /// </summary>
+        private void RemoveProtectedDisk(string diskKey)
+        {
+            if (Properties.Settings.Default.ProtectedDisks == null || string.IsNullOrEmpty(diskKey))
+                return;
+
+            foreach (string stored in Properties.Settings.Default.ProtectedDisks.Cast<string>().ToList())
+            {
+                if (ProtectedDiskEntry.Parse(stored).Key == diskKey)
+                    Properties.Settings.Default.ProtectedDisks.Remove(stored);
+            }
+            Properties.Settings.Default.Save();
+        }
+
+        /// <summary>
+        /// Protects every connected, ready drive — and the whole physical disk each one is on —
+        /// so nothing can be cleaned or formatted until the user explicitly unprotects it.
+        /// Used on first run and by 'Rescan &amp; Protect Drives'. Returns a line describing each
+        /// newly protected disk or drive.
+        /// </summary>
+        private List<string> ProtectAllConnectedDrives()
+        {
+            var newlyProtected = new List<string>();
+
+            if (Properties.Settings.Default.ProtectedDrives == null)
+                Properties.Settings.Default.ProtectedDrives = new System.Collections.Specialized.StringCollection();
+
+            var disksDone = new HashSet<int>();
 
             foreach (var drive in Environment.GetLogicalDrives())
             {
                 try
                 {
                     DriveInfo driveInfo = new DriveInfo(drive);
-                    if (driveInfo.IsReady)
-                    {
-                        // Check if it's the system drive or a drive with a real Windows installation
-                        bool isSystemDrive = drive.StartsWith(System.IO.Path.GetPathRoot(Environment.SystemDirectory));
-                        bool hasWindows = IsWindowsInstallation(drive);
+                    if (!driveInfo.IsReady || !IsLocalDrive(driveInfo))
+                        continue;
 
-                        if (isSystemDrive || hasWindows)
-                        {
-                            systemDrives.Add(drive);
-                            message.AppendLine($"  {drive} - {driveInfo.VolumeLabel} ({FormatBytes(driveInfo.TotalSize)}) [SYSTEM]");
-                        }
-                        else
-                        {
-                            message.AppendLine($"  {drive} - {driveInfo.VolumeLabel} ({FormatBytes(driveInfo.TotalSize)})");
-                        }
+                    PhysicalDisk disk = GetPhysicalDiskForLetter(drive);
+
+                    if (disk != null)
+                    {
+                        if (!disksDone.Add(disk.Number))
+                            continue;
+
+                        // Protect every drive letter on the same physical disk, and the disk itself
+                        var addedLetters = disk.Letters.Count > 0 ? disk.Letters : new List<string> { drive };
+                        var added = addedLetters.Where(l => !Properties.Settings.Default.ProtectedDrives.Contains(l)).ToList();
+                        foreach (string letter in added)
+                            Properties.Settings.Default.ProtectedDrives.Add(letter);
+
+                        if (AddProtectedDisk(disk) || added.Count > 0)
+                            newlyProtected.Add($"Disk {disk.Number} — {DescribeDisk(disk)}  [{FormatLetters(disk.Letters)}]");
+                    }
+                    else if (!Properties.Settings.Default.ProtectedDrives.Contains(drive))
+                    {
+                        Properties.Settings.Default.ProtectedDrives.Add(drive);
+                        newlyProtected.Add(drive);
                     }
                 }
                 catch { }
             }
 
-            message.AppendLine();
-            message.AppendLine("System drives will be automatically protected from formatting.");
-            message.AppendLine("You can manage protected drives in the List Disks tab.");
+            Properties.Settings.Default.Save();
+            return newlyProtected;
+        }
 
-            MessageBox.Show(message.ToString(), "First Run - Drive Protection", MessageBoxButton.OK, MessageBoxImage.Information);
+        /// <summary>
+        /// One-time upgrade for lists saved by older versions, which protected drive letters only:
+        /// also protect the physical disk each of those letters is on now, so the protection stays
+        /// with the disk even if its letters change later.
+        /// </summary>
+        private void ProtectDisksOfProtectedLetters()
+        {
+            if (Properties.Settings.Default.ProtectedDisks == null)
+                Properties.Settings.Default.ProtectedDisks = new System.Collections.Specialized.StringCollection();
 
-            // Add system drives to protected list
-            foreach (string systemDrive in systemDrives)
+            if (Properties.Settings.Default.ProtectedDrives != null)
             {
-                if (!Properties.Settings.Default.ProtectedDrives.Contains(systemDrive))
+                foreach (string drive in Properties.Settings.Default.ProtectedDrives.Cast<string>().ToList())
                 {
-                    Properties.Settings.Default.ProtectedDrives.Add(systemDrive);
+                    try
+                    {
+                        AddProtectedDisk(GetPhysicalDiskForLetter(drive));
+                    }
+                    catch { }
                 }
             }
 
             Properties.Settings.Default.Save();
+        }
+
+        /// <summary>
+        /// First run: protects every connected drive and its whole physical disk (the same as
+        /// 'Rescan &amp; Protect Drives'), THEN tells the user exactly what was protected.
+        /// </summary>
+        private void ShowFirstRunDialog()
+        {
+            // Protect first, so the dialog only ever reports what really happened
+            ProtectDisksOfProtectedLetters();
+            List<string> newlyProtected = ProtectAllConnectedDrives();
+
+            StringBuilder message = new StringBuilder();
+            message.AppendLine("Welcome to Cloned GPT Drive - Boot Fix!");
+            message.AppendLine();
+            message.AppendLine("For your safety, every connected drive and the whole disk it is on is now protected:");
+            message.AppendLine();
+            foreach (string line in newlyProtected)
+            {
+                message.AppendLine($"  • {line}");
+            }
+            if (newlyProtected.Count == 0)
+            {
+                message.AppendLine("  (no drives were found)");
+            }
+            message.AppendLine();
+            message.AppendLine("Protected disks cannot be cleaned or converted through this tool.");
+            message.AppendLine("Drives connected later are not protected until you click 'Rescan & Protect Drives'.");
+            message.AppendLine("To work on a disk, unprotect it on the main screen or in the Extras tab.");
+
+            MessageBox.Show(message.ToString(), "First Run - Drive Protection", MessageBoxButton.OK, MessageBoxImage.Information);
         }
 
         /// <summary>
@@ -1415,9 +1624,8 @@ namespace Cloned_GPT_Drive___Boot_Fix
                 }
                 catch { }
 
-                bool isNetwork = driveInfo.DriveType == DriveType.Network;
-                int? diskNumber = isNetwork ? null : GetDiskNumberForLetter(driveLetter);
-                string diskText = isNetwork ? "Network" : (diskNumber.HasValue ? "Disk " + diskNumber.Value : "unknown");
+                int? diskNumber = GetDiskNumberForLetter(driveLetter);
+                string diskText = diskNumber.HasValue ? "Disk " + diskNumber.Value : "unknown";
 
                 long usedBytes = driveInfo.TotalSize - driveInfo.AvailableFreeSpace;
                 double freePercent = driveInfo.TotalSize > 0 ? driveInfo.AvailableFreeSpace * 100.0 / driveInfo.TotalSize : 0;
@@ -1483,13 +1691,17 @@ namespace Cloned_GPT_Drive___Boot_Fix
             string driveSelected = driveLetter + @":\";
 
             // Protecting/unprotecting always applies to the whole disk (the drive itself and all its volumes)
-            List<string> drivesOnSameDisk = GetDriveLettersOnSameDisk(driveLetter);
+            PhysicalDisk disk = GetPhysicalDiskForLetter(driveLetter);
+            List<string> drivesOnSameDisk = disk != null && disk.Letters.Count > 0
+                ? disk.Letters
+                : GetDriveLettersOnSameDisk(driveLetter);
+            string diskLine = disk != null ? $"Disk {disk.Number} — {DescribeDisk(disk)}\n\n" : "";
 
             if (IsDriveProtected(driveLetter))
             {
                 string driveList = string.Join("\n", drivesOnSameDisk.Select(d => "  • " + d));
                 var result = MessageBox.Show(
-                    $"Are you sure you want to remove protection from this disk?\n\nThe following drive(s) will become eligible for cleaning/formatting:\n\n{driveList}",
+                    $"Are you sure you want to remove protection from this disk?\n\n{diskLine}The following drive(s) will become eligible for cleaning/formatting:\n\n{driveList}",
                     "Remove Protection?",
                     MessageBoxButton.YesNo,
                     MessageBoxImage.Question);
@@ -1500,6 +1712,9 @@ namespace Cloned_GPT_Drive___Boot_Fix
                     {
                         Properties.Settings.Default.ProtectedDrives.Remove(drive);
                     }
+                    Properties.Settings.Default.ProtectedDrives.Remove(driveSelected.ToUpper());
+                    if (disk != null)
+                        RemoveProtectedDisk(disk.Key);
                     Properties.Settings.Default.Save();
                     RefreshProtectedDrivesList();
                     RefreshDriveDropdowns();
@@ -1510,7 +1725,7 @@ namespace Cloned_GPT_Drive___Boot_Fix
             {
                 string driveList = string.Join("\n", drivesOnSameDisk.Select(d => "  • " + d));
                 var result = MessageBox.Show(
-                    $"This will protect the entire disk, including all its drive(s):\n\n{driveList}\n\nProtected drives cannot be cleaned or formatted through this tool.",
+                    $"This will protect the entire disk, including all its drive(s):\n\n{diskLine}{driveList}\n\nProtected drives cannot be cleaned or formatted through this tool.",
                     "Protect This Disk?",
                     MessageBoxButton.YesNo,
                     MessageBoxImage.Question);
@@ -1521,6 +1736,8 @@ namespace Cloned_GPT_Drive___Boot_Fix
                     {
                         AddProtectedDrive(drive);
                     }
+                    AddProtectedDisk(disk);
+                    RefreshProtectedDrivesList();
                     RefreshDriveDropdowns();
                     UpdateProtectButtonState(driveLetter);
                 }
@@ -1643,7 +1860,8 @@ namespace Cloned_GPT_Drive___Boot_Fix
                         parts.Add("(" + entry.Status + ")");
                     if (!detail.IsComplete || physical == null)
                         parts.Add("(unreadable)");
-                    if (detail.IsInUseByWindows || letters.Any(l => IsDriveProtected(l) || IsHostSystemLetter(l)))
+                    if (detail.IsInUseByWindows || (physical != null && IsDiskProtected(physical.Key))
+                        || letters.Any(l => IsLetterInProtectedList(l) || IsHostSystemLetter(l)))
                         parts.Add("🔒");
 
                     string text = string.Join("  ", parts);
@@ -1691,21 +1909,24 @@ namespace Cloned_GPT_Drive___Boot_Fix
             {
                 DiskSafetyCheck check = InspectDisk(choice.Number);
 
-                if (check.Disk == null || !check.Detail.IsComplete)
+                if (check.Disk == null || string.IsNullOrEmpty(check.Disk.Key) || !check.Detail.IsComplete)
                 {
                     MessageBox.Show($"Disk {choice.Number} could not be read, so it was not protected.\n\nClick 'List Disks' and try again.",
                         "Disk Not Read", MessageBoxButton.OK, MessageBoxImage.Warning);
                     return;
                 }
 
-                List<string> drivesOnDisk = check.Letters;
-
-                if (drivesOnDisk.Count == 0)
+                // Same pairing as Clean/Convert: it must still be the disk the user picked
+                if (check.Disk.Key != choice.Key || !SameLetters(check.Letters, choice.Letters))
                 {
-                    MessageBox.Show($"No assigned drive letters were found on Disk {choice.Number}.\n\nOnly disks with visible drive letters can be protected.",
-                        "No Drives Found", MessageBoxButton.OK, MessageBoxImage.Information);
+                    MessageBox.Show($"Disk {choice.Number} is no longer the disk that was listed — disks were added or removed.\n\nClick 'List Disks' and select the disk again.",
+                        "Disk Changed", MessageBoxButton.OK, MessageBoxImage.Warning);
                     return;
                 }
+
+                // The disk itself is protected by its hardware identity, so disks without
+                // drive letters (empty, offline, hidden) can be protected too
+                List<string> drivesOnDisk = check.Letters;
 
                 StringBuilder message = new StringBuilder();
                 message.AppendLine("The following disk will be protected:");
@@ -1720,8 +1941,12 @@ namespace Cloned_GPT_Drive___Boot_Fix
                     {
                         AddProtectedDrive(drive);
                     }
+                    AddProtectedDisk(check.Disk, check.Detail.DiskId);
+                    RefreshProtectedDrivesList();
                     RefreshDriveDropdowns();
-                    MessageBox.Show($"{drivesOnDisk.Count} drive(s) are now protected.", "Success", MessageBoxButton.OK, MessageBoxImage.Information);
+                    MessageBox.Show($"Disk {choice.Number} — {DescribeDisk(check.Disk)} is now protected" +
+                        (drivesOnDisk.Count > 0 ? $", including {FormatLetters(drivesOnDisk)}." : "."),
+                        "Success", MessageBoxButton.OK, MessageBoxImage.Information);
                 }
             }
             catch (Exception ex)
